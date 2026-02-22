@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#C4502A">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="MC Obras">
+  <link rel="manifest" href="manifest.json">
+
+  <title>Marques Caetano · Gestão de Obras</title>
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="css/styles.css">
+
+  <!-- Firebase SDKs (gratuito — Spark plan) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+</head>
+<body>
+
+<!-- ─── AUTH SCREEN ─────────────────────────────────────────── -->
+<div id="auth-screen">
+  <div class="auth-box">
+    <div class="auth-logo">
+      <div>
+        <div class="auth-logo-badge">MC</div>
+      </div>
+      <div>
+        <div class="auth-logo-text">Marques Caetano</div>
+        <div class="auth-logo-sub">Gestão de Obras</div>
+      </div>
+    </div>
+
+    <h1 class="auth-title">Entrar</h1>
+    <p class="auth-sub">Acesse com sua conta cadastrada</p>
+
+    <div class="form-group">
+      <label class="form-label">E-mail</label>
+      <input id="login-email" class="form-input" type="email" placeholder="seu@email.com"
+        autocomplete="email" onkeydown="if(event.key==='Enter')doLogin()">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Senha</label>
+      <input id="login-pass" class="form-input" type="password" placeholder="••••••••"
+        autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+    </div>
+
+    <div id="login-error" style="color:var(--red);font-size:13px;margin-bottom:12px;display:none"></div>
+
+    <button class="btn-primary" style="width:100%;justify-content:center;margin-top:4px" onclick="doLogin()">
+      Entrar →
+    </button>
+
+    <p style="font-size:12px;color:var(--text3);text-align:center;margin-top:24px">
+      Problemas? Contate o administrador do sistema.
+    </p>
+  </div>
+</div>
+
+<!-- ─── APP SHELL ────────────────────────────────────────────── -->
+<div id="app-shell" style="flex-direction:column;min-height:100vh;max-width:430px;margin:0 auto;">
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="logo">
+      <span class="logo-badge">MC</span>
+      <span>Marques Caetano</span>
+    </div>
+    <div class="header-right">
+      <span id="header-date"></span>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main id="main-content">
+    <div class="page-loading"><div class="spinner"></div></div>
+  </main>
+
+  <!-- Bottom Navigation -->
+  <nav class="bottom-nav">
+    <button class="nav-item active" data-page="dashboard" onclick="App.navigate('dashboard')">
+      <span class="nav-icon">📊</span>
+      Dashboard
+    </button>
+    <button class="nav-item" data-page="obras" onclick="App.navigate('obras')">
+      <span class="nav-icon">🏗</span>
+      Obras
+    </button>
+    <button class="nav-item" data-page="funcionarios" onclick="App.navigate('funcionarios')">
+      <span class="nav-icon">👷</span>
+      Equipe
+    </button>
+    <button class="nav-item" data-page="ordens_compra" onclick="App.navigate('ordens_compra')">
+      <span class="nav-icon">📄</span>
+      OCs
+    </button>
+    <button class="nav-item" data-page="lancamentos" onclick="App.navigate('lancamentos')">
+      <span class="nav-icon">📋</span>
+      Lançamentos
+    </button>
+    <button class="nav-item" data-page="configuracoes" onclick="App.navigate('configuracoes')">
+      <span class="nav-icon">⚙</span>
+      Config
+    </button>
+  </nav>
+
+  <!-- FAB + Novo -->
+  <button class="fab" onclick="showNovoLancamento()" title="Novo lançamento">＋</button>
+
+</div>
+
+<!-- ─── MODAL OVERLAY ────────────────────────────────────────── -->
+<div id="modal-overlay"></div>
+
+<!-- ─── TOAST CONTAINER ─────────────────────────────────────── -->
+<div id="toast-container"></div>
+
+<!-- ─── LOADING OVERLAY ──────────────────────────────────────── -->
+<div id="loading-overlay">
+  <div class="spinner"></div>
+</div>
+
+<!-- ─── SCRIPTS ──────────────────────────────────────────────── -->
+<script src="firebase-config.js"></script>
+<script src="js/app.js"></script>
+<script src="js/pages-obras.js"></script>
+<script src="js/pages-rest.js"></script>
+
+<script>
+  // Data no header
+  document.getElementById('header-date').textContent =
+    new Date().toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' });
+</script>
+
+</body>
+</html>

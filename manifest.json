@@ -1,0 +1,22 @@
+{
+  "name": "Marques Caetano · Gestão de Obras",
+  "short_name": "MC Obras",
+  "description": "Sistema de gestão financeira para empreiteiras",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F5F4F0",
+  "theme_color": "#C4502A",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

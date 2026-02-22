@@ -197,20 +197,22 @@
 <script src="js/config.js"></script>
 
 <script>
-  // Data no header
-  const dataStr = new Date().toLocaleDateString('pt-BR', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
-  document.getElementById('topbar-date').textContent = dataStr;
-  document.getElementById('mobile-date').textContent = new Date().toLocaleDateString('pt-BR',{month:'short',year:'numeric'});
+  document.addEventListener('DOMContentLoaded', function() {
+    // Data no header
+    const dataStr = new Date().toLocaleDateString('pt-BR', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+    document.getElementById('topbar-date').textContent = dataStr;
+    document.getElementById('mobile-date').textContent = new Date().toLocaleDateString('pt-BR',{month:'short',year:'numeric'});
 
-  // ── Bind dos botões de login via event listener (evita erro de inicialização) ──
-  document.getElementById('login-email').addEventListener('keydown', function(e) {
-    if (e.key === 'Enter') doLogin();
-  });
-  document.getElementById('login-pass').addEventListener('keydown', function(e) {
-    if (e.key === 'Enter') doLogin();
-  });
-  document.querySelector('#auth-screen .btn-primary').addEventListener('click', function() {
-    doLogin();
+    // Bind dos botões de login — executado só após todos os scripts estarem prontos
+    document.getElementById('login-email').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') doLogin();
+    });
+    document.getElementById('login-pass').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') doLogin();
+    });
+    document.querySelector('#auth-screen .btn-primary').addEventListener('click', function() {
+      doLogin();
+    });
   });
 </script>
 

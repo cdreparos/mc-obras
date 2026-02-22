@@ -10,11 +10,6 @@
   <link rel="manifest" href="manifest.json">
   <title>Marques Caetano · Gestão de Obras</title>
   <link rel="stylesheet" href="css/styles.css">
-
-  <!-- Firebase 9 Compat -->
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 </head>
 <body>
 
@@ -37,17 +32,17 @@
     <div class="form-group">
       <label class="form-label">E-mail</label>
       <input id="login-email" class="form-input" type="email" placeholder="seu@email.com"
-        autocomplete="email" onkeydown="if(event.key==='Enter')doLogin()">
+        autocomplete="email">
     </div>
     <div class="form-group">
       <label class="form-label">Senha</label>
       <input id="login-pass" class="form-input" type="password" placeholder="••••••••"
-        autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+        autocomplete="current-password">
     </div>
 
     <div id="login-error" style="color:var(--danger);font-size:12px;margin-bottom:10px;min-height:16px"></div>
 
-    <button class="btn btn-primary btn-lg btn-full" onclick="doLogin()">Entrar →</button>
+    <button class="btn btn-primary btn-lg btn-full">Entrar →</button>
 
     <p style="font-size:11px;color:var(--text3);text-align:center;margin-top:24px">
       Acesso restrito. Contate o administrador para criar conta.
@@ -186,7 +181,16 @@
 <div id="loading-overlay"><div class="spinner" style="width:40px;height:40px"></div></div>
 
 <!-- ─── Scripts ──────────────────────────────────────────── -->
+
+<!-- Firebase 9 Compat (carregado aqui para garantir que o DOM já existe) -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+
+<!-- Configuração e inicialização do Firebase -->
 <script src="firebase-config.js"></script>
+
+<!-- Lógica da aplicação -->
 <script src="js/app.js"></script>
 <script src="js/obras.js"></script>
 <script src="js/pages.js"></script>
@@ -197,6 +201,17 @@
   const dataStr = new Date().toLocaleDateString('pt-BR', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
   document.getElementById('topbar-date').textContent = dataStr;
   document.getElementById('mobile-date').textContent = new Date().toLocaleDateString('pt-BR',{month:'short',year:'numeric'});
+
+  // ── Bind dos botões de login via event listener (evita erro de inicialização) ──
+  document.getElementById('login-email').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') doLogin();
+  });
+  document.getElementById('login-pass').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') doLogin();
+  });
+  document.querySelector('#auth-screen .btn-primary').addEventListener('click', function() {
+    doLogin();
+  });
 </script>
 
 </body>

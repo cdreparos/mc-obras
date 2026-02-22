@@ -164,8 +164,10 @@ async function doLogin() {
   try {
     await auth.signInWithEmailAndPassword(email, pass);
   } catch(e) {
-    App.toast('Login inválido. Verifique seus dados.', 'error');
-    document.getElementById('login-error').textContent = e.message;
+    const erros = {'auth/user-not-found':'Usuário não encontrado.','auth/wrong-password':'Senha incorreta.','auth/invalid-email':'E-mail inválido.','auth/user-disabled':'Conta desativada. Contate o administrador.','auth/too-many-requests':'Muitas tentativas. Aguarde e tente novamente.','auth/invalid-credential':'E-mail ou senha incorretos.','auth/network-request-failed':'Erro de conexão. Verifique sua internet.'};
+    const msg = erros[e.code] || 'Erro ao entrar. Verifique seus dados.';
+    App.toast(msg, 'error');
+    document.getElementById('login-error').textContent = erros[e.code] || e.message;
   } finally {
     App.loading(false);
   }

@@ -3,7 +3,7 @@
 // ================================================================
 
 // ── Estado Global ─────────────────────────────────────────────
-const App = {
+var App = {
   user: null,
   empresaId: EMPRESA_ID,
   page: 'dashboard',

@@ -1,5 +1,5 @@
 // ================================================================
-// funcionarios.js + presenca.js + oc.js + lancamentos.js
+// pages.js — Funcionários, Presença, OC, Lançamentos
 // ================================================================
 
 // ── FUNCIONÁRIOS ─────────────────────────────────────────────
@@ -8,7 +8,6 @@ async function renderFuncionarios() {
   const main = document.getElementById('main-content');
   const { mes: m, ano: a } = mes();
 
-  // Detectar mensalistas sem folha este mês
   const semFolha = funcionarios.filter(f => f.ativo && f.tipo_contrato==='mensalista').filter(f => {
     const aloc = alocacoes.find(al => al.funcionario_id===f.id && !al.data_fim);
     if (!aloc) return false;
@@ -30,7 +29,7 @@ async function renderFuncionarios() {
     ${semFolha.length>0 ? `
     <div class="alert warning" onclick="showFolhaSugerida()">
       <span class="alert-icon">📋</span>
-      <span><strong>Folha sugerida para ${String(m).padStart(2,'0')}/${a}</strong> — ${semFolha.length} mensalista${semFolha.length>1?'s':''}  aguardando confirmação. Clique para processar.</span>
+      <span><strong>Folha sugerida para ${String(m).padStart(2,'0')}/${a}</strong> — ${semFolha.length} mensalista${semFolha.length>1?'s':''} aguardando confirmação. Clique para processar.</span>
     </div>` : ''}
 
     <div class="dash-grid">
@@ -52,10 +51,14 @@ async function renderFuncionarios() {
                 </div>
                 <div>
                   <div class="func-value">${fmt(f.valor_base)}${f.tipo_contrato==='diarista'?'/dia':'/mês'}</div>
-                  <div style="text-align:right;margin-top:4px">
+                  <div style="text-align:right;margin-top:6px;display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
                     <button class="btn-link" onclick="showPagamento('${f.id}')">Pagar</button>
-                    <span style="color:var(--border2);margin:0 4px">|</span>
+                    <span style="color:var(--border2)">|</span>
                     <button class="btn-link" onclick="showEditarAloc('${f.id}')">Alocar</button>
+                    <span style="color:var(--border2)">|</span>
+                    <button class="btn-link" onclick="showEditarFuncionario('${f.id}')">Editar</button>
+                    <span style="color:var(--border2)">|</span>
+                    <button class="btn-link danger" onclick="inativarFuncionario('${f.id}','${f.nome.replace(/'/g,"\\'")}')">Inativar</button>
                   </div>
                 </div>
               </div>`;
@@ -74,7 +77,10 @@ async function renderFuncionarios() {
                 <div class="func-name">${f.nome}</div>
                 <div class="func-meta">${f.funcao||''}</div>
               </div>
-              <button class="btn btn-secondary btn-sm" onclick="reativarFunc('${f.id}')">Reativar</button>
+              <div style="display:flex;gap:8px;align-items:center">
+                <button class="btn btn-secondary btn-sm" onclick="reativarFunc('${f.id}')">Reativar</button>
+                <button class="btn btn-danger btn-sm" onclick="excluirFuncionario('${f.id}','${f.nome.replace(/'/g,"\\'")}')">Excluir</button>
+              </div>
             </div>`).join('')}
         </div>
       </div>
@@ -150,6 +156,89 @@ async function salvarFuncionario() {
   finally { App.loading(false); }
 }
 
+async function showEditarFuncionario(funcId) {
+  const func = App.cache.funcionarios.find(f=>f.id===funcId);
+  if (!func) return;
+  showModal({
+    title: `Editar Funcionário`,
+    body: `
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Nome Completo *</label>
+          <input id="ef-nome" class="form-input" value="${func.nome}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Função</label>
+          <input id="ef-func" class="form-input" value="${func.funcao||''}">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Tipo de Contrato</label>
+          <select id="ef-tipo" class="form-input" onchange="atualizarLabelValorEd()">
+            <option value="mensalista" ${func.tipo_contrato==='mensalista'?'selected':''}>Mensalista</option>
+            <option value="diarista"   ${func.tipo_contrato==='diarista'?'selected':''}>Diarista</option>
+            <option value="empreita"   ${func.tipo_contrato==='empreita'?'selected':''}>Empreita</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" id="ef-valor-lbl">${func.tipo_contrato==='diarista'?'Valor por Dia':'Salário Mensal'} (R$)</label>
+          <input id="ef-valor" class="form-input" type="number" step="0.01" value="${func.valor_base||0}">
+        </div>
+      </div>`,
+    footer: `
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarEdicaoFuncionario('${funcId}')">Salvar</button>`
+  });
+}
+
+function atualizarLabelValorEd() {
+  const t = document.getElementById('ef-tipo')?.value;
+  const lbl = document.getElementById('ef-valor-lbl');
+  if (lbl) lbl.textContent = t==='diarista' ? 'Valor por Dia (R$)' : t==='empreita' ? 'Valor Padrão (R$)' : 'Salário Mensal (R$)';
+}
+
+async function salvarEdicaoFuncionario(funcId) {
+  const nome  = document.getElementById('ef-nome').value.trim();
+  const func  = document.getElementById('ef-func').value.trim();
+  const tipo  = document.getElementById('ef-tipo').value;
+  const valor = parseFloat(document.getElementById('ef-valor').value) || 0;
+  if (!nome) return App.toast('Informe o nome', 'error');
+  App.loading(true);
+  try {
+    await updateDoc2('funcionarios', funcId, { nome, funcao: func, tipo_contrato: tipo, valor_base: valor });
+    closeModal();
+    App.toast('Funcionário atualizado!');
+    App.navigate('funcionarios');
+  } catch(e) { App.toast('Erro: '+e.message,'error'); }
+  finally { App.loading(false); }
+}
+
+async function inativarFuncionario(funcId, nome) {
+  if (!confirm(`Inativar "${nome}"? Ele aparecerá na lista de inativos e poderá ser reativado.`)) return;
+  App.loading(true);
+  try {
+    await updateDoc2('funcionarios', funcId, { ativo: false });
+    // Encerrar alocações ativas
+    const alocs = App.cache.alocacoes.filter(a=>a.funcionario_id===funcId && !a.data_fim);
+    for (const a of alocs) await updateDoc2('alocacoes', a.id, { data_fim: today() });
+    App.toast(`${nome} inativado.`);
+    App.navigate('funcionarios');
+  } catch(e) { App.toast('Erro: '+e.message,'error'); }
+  finally { App.loading(false); }
+}
+
+async function excluirFuncionario(funcId, nome) {
+  if (!confirm(`Excluir permanentemente "${nome}"?\n\nATENÇÃO: Esta ação não pode ser desfeita. Os lançamentos de pagamento anteriores serão mantidos.`)) return;
+  App.loading(true);
+  try {
+    await deleteDoc2('funcionarios', funcId);
+    App.toast(`${nome} excluído.`);
+    App.navigate('funcionarios');
+  } catch(e) { App.toast('Erro: '+e.message,'error'); }
+  finally { App.loading(false); }
+}
+
 async function showEditarAloc(funcId) {
   const { obras, alocacoes } = await loadAll();
   const func = App.cache.funcionarios.find(f=>f.id===funcId);
@@ -183,7 +272,6 @@ async function salvarAloc(funcId, alocAtualId) {
   finally { App.loading(false); }
 }
 
-// PAGAMENTO — bug corrigido: agora busca alocação direto do Firestore
 async function showPagamento(funcId) {
   const { obras, alocacoes } = await loadAll();
   const func = App.cache.funcionarios.find(f=>f.id===funcId);
@@ -261,18 +349,12 @@ async function confirmarPagamento() {
   App.loading(true);
   try {
     await addDoc2('lancamentos', {
-      obra_id:     obraId,
-      planilha_id: null,
-      tipo:        'despesa',
-      categoria:   'Folha',
-      valor,
-      descricao:   `${tipo==='salario'?'Salário':tipo==='adiantamento'?'Adiantamento':tipo==='va'?'Vale Alimentação':tipo==='vt'?'Vale Transporte':'Bônus'} — ${func?.nome||''}`,
-      origem:      'funcionarios',
-      origem_ref_id: funcId,
-      competencia_mes: m,
-      competencia_ano: a,
-      forma_pagamento: forma,
-      status:      'ativo',
+      obra_id: obraId, planilha_id: null,
+      tipo: 'despesa', categoria: 'Folha', valor,
+      descricao: `${tipo==='salario'?'Salário':tipo==='adiantamento'?'Adiantamento':tipo==='va'?'Vale Alimentação':tipo==='vt'?'Vale Transporte':'Bônus'} — ${func?.nome||''}`,
+      origem: 'funcionarios', origem_ref_id: funcId,
+      competencia_mes: m, competencia_ano: a,
+      forma_pagamento: forma, status: 'ativo',
     });
     closeModal();
     App.toast(`Pagamento de ${fmt(valor)} lançado!`);
@@ -349,6 +431,7 @@ async function reativarFunc(id) {
   App.toast('Funcionário reativado!');
   App.navigate('funcionarios');
 }
+
 
 // ── CONTROLE DE PRESENÇA ──────────────────────────────────────
 async function renderPresenca() {
@@ -523,55 +606,48 @@ async function pagarDiasPresenca(funcId, dias, valorDia) {
   finally { App.loading(false); }
 }
 
+
 // ── ORDENS DE COMPRA ──────────────────────────────────────────
-// Parser da OC baseado nos modelos Ferreira Santos / ENGIX:
-// Campos identificados: Nº (número OC), Nº Obra (ação), Fornec., CNPJ/CPF, Obra (nome), DATA, Total:
+// Parser baseado nos modelos reais Ferreira Santos / ENGIX
 function parsearOC(texto) {
   const r = {};
 
-  // Nº da OC: "Nº: 12257" ou "Nº:12257"
-  const mNum = texto.match(/N[º°o][\s:]+(\d{4,6})/i);
+  // Nº da OC: "Nº:\n12257" ou "Nº: 12257"
+  const mNum = texto.match(/N[º°o][\s:\n\r]+(\d{4,6})/i);
   if (mNum) r.numero_oc = mNum[1].trim();
 
-  // Nº Obra / Ação: "Nº Obra\n1671" ou linha com apenas número após "Nº Obra"
-  const mObra = texto.match(/N[º°o]\s*Obra[\s\n\r]+(\d{3,6})/i)
-    || texto.match(/A[çc][aã]o[\s:]+(\d{3,6})/i)
-    || texto.match(/A[çc][aã]o:\s*(\d{3,6})/i)
-    // Campo AÇÃO na observação: "AÇÃO: 1671"
+  // Nº Obra / Ação: "Nº Obra\n1671" ou linha com número após "Nº Obra"
+  const mAcao = texto.match(/N[º°o]\s*Obra[\s\n\r]+(\d{3,6})/i)
+    || texto.match(/A[çc][aã]o:?\s*(\d{3,6})/i)
     || texto.match(/A[ÇC][ÃA]O[\s:,]+(\d{3,6})/i);
-  if (mObra) r.numero_acao = mObra[1].trim();
+  if (mAcao) r.numero_acao = mAcao[1].trim();
 
-  // Fornecedor (linha após "Fornec.:")
+  // Fornecedor: linha após "Fornec.:" ou "Fornecedor:"
   const mForn = texto.match(/Fornec[.\s:]+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^\n\r]{3,60})/i)
     || texto.match(/Fornecedor[\s:]+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^\n\r]{3,60})/i);
-  if (mForn) r.fornecedor = mForn[1].trim();
+  if (mForn) r.fornecedor = mForn[1].trim().replace(/\s+/g,' ');
 
-  // CNPJ Fornecedor
-  const mCNPJ = texto.match(/CNPJ\/CPF[\s:]+(\d{2}[\.\s]?\d{3}[\.\s]?\d{3}[\/\s]?\d{4}[-\s]?\d{2})/i)
-    || texto.match(/(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})/);
-  if (mCNPJ) {
-    // Pegar o segundo match de CNPJ (o fornecedor, não a empresa)
-    const todos = [...texto.matchAll(/(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})/g)].map(m=>m[1]);
-    r.cnpj_fornecedor = todos[todos.length-1] || todos[0];
-  }
+  // CNPJ Fornecedor — pegar o último CNPJ encontrado (fornecedor, não empresa)
+  const todosCNPJ = [...texto.matchAll(/(\d{2}[\.\s]?\d{3}[\.\s]?\d{3}[\/\s]?\d{4}[-\s]?\d{2})/g)].map(m=>m[1]);
+  if (todosCNPJ.length > 0) r.cnpj_fornecedor = todosCNPJ[todosCNPJ.length-1];
 
-  // Data: campo DATA ou "20/02/2026"
-  const mData = texto.match(/DATA[\s\n\r]+([\d\/]{8,10})/i)
-    || texto.match(/Entrega[\s:]+([\d\/]{8,10})/i)
-    || texto.match(/(\d{2}\/\d{2}\/\d{4})/);
+  // Data: campo "DATA" seguido de data
+  const mData = texto.match(/\bDATA\b[\s\n\r]+([\d]{2}\/[\d]{2}\/[\d]{4})/i)
+    || texto.match(/Entrega[\s:]+([\d]{2}\/[\d]{2}\/[\d]{4})/i)
+    || texto.match(/([\d]{2}\/[\d]{2}\/[\d]{4})/);
   if (mData) {
     const partes = mData[1].split('/');
     if (partes.length===3) r.data_emissao = `${partes[2]}-${partes[1]}-${partes[0]}`;
   }
 
-  // Valor Total: "Total: 615,20" ou "Total:\n615,20"
-  const mTotal = texto.match(/Total[\s:]*\n?([\d\.]+,\d{2})/i)
-    || texto.match(/Total[\s:]*R?\$?\s*([\d\.]+,\d{2})/i);
+  // Valor Total: "Total:\n615,20" ou "Total: 615,20"
+  const mTotal = texto.match(/\bTotal[\s:]*\n\s*([\d\.]+,\d{2})/i)
+    || texto.match(/\bTotal[\s:]*R?\$?\s*([\d\.]+,\d{2})/i);
   if (mTotal) r.valor_total = parseFloat(mTotal[1].replace(/\./g,'').replace(',','.'));
 
-  // Empresa contratante (linha com "Empresa:" ou nome antes do endereço)
-  const mEmp = texto.match(/Empresa[\s:]+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^\n\r]{5,60})/i);
-  if (mEmp) r.empresa_contratante = mEmp[1].trim();
+  // Nome da obra: campo "Obra" → linha longa de descrição
+  const mObra = texto.match(/\bObra\b[\s\n\r]+(\d{1,6})\s*\n([^\n\r]{10,100})/i);
+  if (mObra) r.nome_obra = mObra[2].trim();
 
   return r;
 }
@@ -653,7 +729,6 @@ async function cancelarOCGlobal(ocId) {
   App.navigate('ordens_compra');
 }
 
-// IMPORTAR OC — com parser baseado nos modelos reais
 async function showImportarOC(obraIdPre = '') {
   const { obras } = await loadAll();
   showModal({
@@ -681,41 +756,33 @@ async function processarArquivoOC(file) {
   if (!file) return;
   document.getElementById('oc-drop').innerHTML = `<div class="upload-icon">⏳</div><div class="upload-text">Lendo PDF...</div>`;
 
-  // Tentar extrair texto do PDF (o texto já está embutido no PDF)
   const reader = new FileReader();
   reader.onload = async (e) => {
     try {
-      // Decodificar bytes para texto (funciona para PDFs com texto embutido)
       const bytes = new Uint8Array(e.target.result);
-      let texto = '';
-      // Extrair strings de texto do PDF (buscar padrões BT...ET e Tj)
       const raw = new TextDecoder('latin1').decode(bytes);
 
-      // Método 1: Extrair streams de texto do PDF
+      // Método 1: Extrair strings de texto do PDF (BT...ET)
       const streams = [];
       const btRe = /BT([\s\S]*?)ET/g;
       let m;
       while ((m = btRe.exec(raw)) !== null) {
         const bloco = m[1];
-        // Extrair strings entre () ou <>
         const strRe = /\(([^)]*)\)/g;
         let sm;
         while ((sm = strRe.exec(bloco)) !== null) {
-          const s = sm[1].replace(/\\n/g,'\n').replace(/\\r/g,'').replace(/\\\(/g,'(').replace(/\\\)/g,')');
+          const s = sm[1]
+            .replace(/\\n/g,'\n').replace(/\\r/g,'')
+            .replace(/\\\(/g,'(').replace(/\\\)/g,')');
           if (s.trim()) streams.push(s.trim());
         }
       }
-      texto = streams.join('\n');
+      let texto = streams.join('\n');
 
-      // Se extraiu pouco texto, tenta método simples de string
+      // Método 2: fallback texto simples
       if (texto.length < 50) {
         texto = raw.replace(/[^\x20-\x7E\xC0-\xFF\n\r\t]/g,' ');
       }
-
-      // Concatenar com texto do contexto já visível (passado no PDF como metadado)
-      // Os PDFs enviados têm o texto no início do documento como extração
-      const metaText = raw.substring(0, 2000);
-      texto = texto + '\n' + metaText;
 
       await exibirPreviewOC(texto, file.name);
     } catch(err) {
@@ -730,7 +797,6 @@ async function exibirPreviewOC(texto, filename) {
   const { obras, planilhas } = await loadAll();
   const dados = parsearOC(texto + '\n' + filename);
 
-  // Tentar encontrar obra pelo número da ação
   let obraEncontrada = null;
   if (dados.numero_acao) {
     obraEncontrada = obras.find(o => o.numero_acao === dados.numero_acao);
@@ -740,7 +806,7 @@ async function exibirPreviewOC(texto, filename) {
 
   document.getElementById('oc-step1').style.display = 'none';
   document.getElementById('oc-step2').innerHTML = `
-    <div class="alert success no-click"><span>✓ Dados extraídos automaticamente — confira e ajuste se necessário</span></div>
+    <div class="alert success no-click"><span>✓ Dados extraídos — confira e ajuste se necessário</span></div>
 
     <div class="oc-preview">
       <div class="oc-preview-header">Dados Extraídos da OC</div>
@@ -749,7 +815,7 @@ async function exibirPreviewOC(texto, filename) {
         ['Nº Ação', dados.numero_acao||''],
         ['Fornecedor', dados.fornecedor||''],
         ['CNPJ Fornecedor', dados.cnpj_fornecedor||''],
-        ['Data Emissão', dados.data_emissao||''],
+        ['Data Emissão', dados.data_emissao ? fmtDate(new Date(dados.data_emissao+'T12:00')) : ''],
         ['Total', dados.valor_total ? fmt(dados.valor_total) : ''],
       ].map(([k,v])=>`
       <div class="oc-preview-row">
@@ -803,21 +869,30 @@ async function exibirPreviewOC(texto, filename) {
           ? '<option value="">— Selecione a obra primeiro —</option>'
           : '<option value="">— Selecione —</option>'+pls.map(p=>`<option value="${p.id}">${p.nome}</option>`).join('')}
       </select>
-      ${pls.length===1 ? `<div class="form-hint" style="color:var(--success)">✓ Planilha única selecionada automaticamente</div>` : ''}
     </div>`;
 
-  // Auto-selecionar planilha se for única
   if (pls.length===1) {
     setTimeout(()=>{ const s=document.getElementById('oi-plan'); if(s) s.value=pls[0].id; },50);
   }
 
   document.getElementById('oc-step2').style.display = 'block';
 
-  // Atualizar footer do modal
   const footer = document.querySelector('.modal-footer');
   if (footer) footer.innerHTML = `
     <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
     <button class="btn btn-primary" onclick="confirmarImportacaoOC()">✓ Confirmar e Lançar</button>`;
+  else {
+    // Adicionar footer se não existir
+    const modal = document.querySelector('.modal');
+    if (modal) {
+      const f = document.createElement('div');
+      f.className = 'modal-footer';
+      f.innerHTML = `
+        <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-primary" onclick="confirmarImportacaoOC()">✓ Confirmar e Lançar</button>`;
+      modal.appendChild(f);
+    }
+  }
 }
 
 function buscarObraPorAcao() {
@@ -912,7 +987,6 @@ async function confirmarImportacaoOC() {
   if (!planId) return App.toast('Selecione a planilha', 'error');
   if (!valor)  return App.toast('Informe o valor total', 'error');
 
-  // Verificar duplicidade
   App.loading(true);
   try {
     const dup = await empresaCol('ordens_compra')
@@ -920,7 +994,6 @@ async function confirmarImportacaoOC() {
 
     if (!dup.empty) {
       App.loading(false);
-      // Mostrar opções ao usuário
       const ocExist = dup.docs[0].data();
       showModal({
         title: '⚠ OC Duplicada Detectada',
@@ -945,7 +1018,6 @@ async function forcarImportacaoOC(num,acao,forn,cnpj,valor,data,obraId,planId) {
   closeModal();
   App.loading(true);
   try {
-    // Cancelar OC existente
     const dup = await empresaCol('ordens_compra').where('numero_oc','==',num).where('obra_id','==',obraId).get();
     for (const d of dup.docs) {
       await updateDoc2('ordens_compra', d.id, { status: 'cancelada' });
@@ -962,7 +1034,6 @@ async function gravarOC(num,acao,forn,cnpj,valor,data,obraId,planId) {
     numero_oc:num, numero_acao:acao, fornecedor:forn, cnpj_fornecedor:cnpj,
     valor_total:valor, data_emissao:data, obra_id:obraId, planilha_id:planId, status:'ativa'
   });
-  // IMPACTO IMEDIATO no saldo da planilha
   await addDoc2('lancamentos', {
     obra_id:obraId, planilha_id:planId,
     tipo:'despesa', categoria:'Material/OC',
@@ -974,6 +1045,7 @@ async function gravarOC(num,acao,forn,cnpj,valor,data,obraId,planId) {
   App.toast(`OC ${num} importada! ${fmt(valor)} debitado imediatamente.`);
   App.navigate('ordens_compra');
 }
+
 
 // ── LANÇAMENTOS ───────────────────────────────────────────────
 async function renderLancamentos() {
@@ -1188,36 +1260,42 @@ async function confirmarNovoLanc() {
   finally { App.loading(false); }
 }
 
-// Expor
-window.renderFuncionarios  = renderFuncionarios;
-window.renderPresenca      = renderPresenca;
-window.renderOC            = renderOC;
-window.renderLancamentos   = renderLancamentos;
-window.showNovoFuncionario = showNovoFuncionario;
-window.atualizarLabelValor = atualizarLabelValor;
-window.salvarFuncionario   = salvarFuncionario;
-window.showEditarAloc      = showEditarAloc;
-window.salvarAloc          = salvarAloc;
-window.showPagamento       = showPagamento;
-window.calcDiaria          = calcDiaria;
-window.confirmarPagamento  = confirmarPagamento;
-window.showFolhaSugerida   = showFolhaSugerida;
-window.confirmarFolha      = confirmarFolha;
-window.reativarFunc        = reativarFunc;
-window.togglePresenca      = togglePresenca;
-window.pagarDiasPresenca   = pagarDiasPresenca;
-window.showImportarOC      = showImportarOC;
-window.processarArquivoOC  = processarArquivoOC;
-window.buscarObraPorAcao   = buscarObraPorAcao;
-window.carregarPlanilhasOI = carregarPlanilhasOI;
-window.mostrarFormOCManual = mostrarFormOCManual;
+
+
+// ── EXPOR GLOBALMENTE ─────────────────────────────────────────
+window.renderFuncionarios    = renderFuncionarios;
+window.renderPresenca        = renderPresenca;
+window.renderOC              = renderOC;
+window.renderLancamentos     = renderLancamentos;
+window.showNovoFuncionario   = showNovoFuncionario;
+window.atualizarLabelValor   = atualizarLabelValor;
+window.salvarFuncionario     = salvarFuncionario;
+window.showEditarFuncionario = showEditarFuncionario;
+window.atualizarLabelValorEd = atualizarLabelValorEd;
+window.salvarEdicaoFuncionario = salvarEdicaoFuncionario;
+window.inativarFuncionario   = inativarFuncionario;
+window.excluirFuncionario    = excluirFuncionario;
+window.showEditarAloc        = showEditarAloc;
+window.salvarAloc            = salvarAloc;
+window.showPagamento         = showPagamento;
+window.calcDiaria            = calcDiaria;
+window.confirmarPagamento    = confirmarPagamento;
+window.showFolhaSugerida     = showFolhaSugerida;
+window.confirmarFolha        = confirmarFolha;
+window.reativarFunc          = reativarFunc;
+window.togglePresenca        = togglePresenca;
+window.pagarDiasPresenca     = pagarDiasPresenca;
+window.showImportarOC        = showImportarOC;
+window.processarArquivoOC    = processarArquivoOC;
+window.buscarObraPorAcao     = buscarObraPorAcao;
+window.carregarPlanilhasOI   = carregarPlanilhasOI;
+window.mostrarFormOCManual   = mostrarFormOCManual;
 window.confirmarImportacaoOC = confirmarImportacaoOC;
-window.forcarImportacaoOC  = forcarImportacaoOC;
-window.cancelarOCGlobal    = cancelarOCGlobal;
-window.renderLancamentos   = renderLancamentos;
-window.filtrarLancs        = filtrarLancs;
-window.estornarLancUI      = estornarLancUI;
-window.showNovoLancamento  = showNovoLancamento;
-window.setTipoLanc         = setTipoLanc;
-window.carregarPlanilhasNL = carregarPlanilhasNL;
-window.confirmarNovoLanc   = confirmarNovoLanc;
+window.forcarImportacaoOC    = forcarImportacaoOC;
+window.cancelarOCGlobal      = cancelarOCGlobal;
+window.filtrarLancs          = filtrarLancs;
+window.estornarLancUI        = estornarLancUI;
+window.showNovoLancamento    = showNovoLancamento;
+window.setTipoLanc           = setTipoLanc;
+window.carregarPlanilhasNL   = carregarPlanilhasNL;
+window.confirmarNovoLanc     = confirmarNovoLanc;

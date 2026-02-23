@@ -9,8 +9,8 @@
 // visualizador→ dashboard, obras (todas, só leitura), planilhas (só leitura)
 
 const PERFIL_TELAS = {
-  admin:        ['dashboard','obras','obra_detail','planilhas','funcionarios','presenca','ordens_compra','lancamentos','configuracoes'],
-  encarregado:  ['obras','obra_detail','funcionarios','presenca','lancamentos'],
+  admin:        ['dashboard','obras','obra_detail','planilhas','funcionarios','presenca','horas_extras','ordens_compra','lancamentos','configuracoes'],
+  encarregado:  ['obras','obra_detail','funcionarios','presenca','horas_extras','lancamentos'],
   visualizador: ['dashboard','obras','obra_detail','planilhas'],
 };
 
@@ -22,8 +22,8 @@ const PERFIL_HOME = {
 
 // Menus da sidebar visíveis por perfil
 const PERFIL_NAV = {
-  admin:        ['dashboard','obras','planilhas','funcionarios','presenca','ordens_compra','lancamentos','configuracoes'],
-  encarregado:  ['obras','funcionarios','presenca','lancamentos'],
+  admin:        ['dashboard','obras','planilhas','funcionarios','presenca','horas_extras','ordens_compra','lancamentos','configuracoes'],
+  encarregado:  ['obras','funcionarios','presenca','horas_extras','lancamentos'],
   visualizador: ['dashboard','obras','planilhas'],
 };
 
@@ -315,6 +315,7 @@ function renderPage(page, params = {}) {
     planilhas:     'Planilhas',
     funcionarios:  'Funcionários',
     presenca:      'Controle de Presença',
+    horas_extras:  'Horas Extras',
     ordens_compra: 'Ordens de Compra',
     lancamentos:   'Lançamentos',
     configuracoes: 'Configurações',
@@ -328,6 +329,7 @@ function renderPage(page, params = {}) {
     planilhas:     renderPlanilhas,
     funcionarios:  renderFuncionarios,
     presenca:      renderPresenca,
+    horas_extras:  renderHorasExtras,
     ordens_compra: renderOC,
     lancamentos:   renderLancamentos,
     configuracoes: renderConfig,

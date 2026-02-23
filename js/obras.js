@@ -19,7 +19,6 @@ async function renderDashboard() {
   const obrasAtivas = obras.filter(o => o.status==='ativa').length;
   const negativos   = planilhas.filter(p => calcSaldoPlanilha(p, lancamentos) < 0);
 
-  // Barras semanais
   const now = new Date();
   const weekBars = Array.from({length:8}, (_,i) => {
     const wEnd   = new Date(now); wEnd.setDate(now.getDate() - i*7);
@@ -31,7 +30,6 @@ async function renderDashboard() {
   }).reverse();
   const maxBar = Math.max(...weekBars, 1);
 
-  // Top categorias
   const catMap = {};
   lancamentos.filter(l => l.tipo==='despesa' && l.status==='ativo').forEach(l => {
     catMap[l.categoria] = (catMap[l.categoria]||0) + (l.valor||0);
@@ -43,7 +41,6 @@ async function renderDashboard() {
 
   main.innerHTML = `
   <div class="page">
-    <!-- STATS -->
     <div class="stats-grid">
       <div class="stat-card" onclick="App.navigate('obras')" style="cursor:pointer">
         <div class="stat-card-inner">
@@ -97,7 +94,6 @@ async function renderDashboard() {
     </div>` : ''}
 
     <div class="dash-grid" style="margin-bottom:16px">
-      <!-- Gráfico semanal -->
       <div class="card">
         <div class="card-header">
           <span class="card-title">Gastos · Últimas 8 semanas</span>
@@ -117,7 +113,6 @@ async function renderDashboard() {
         </div>
       </div>
 
-      <!-- Top Categorias -->
       <div class="card">
         <div class="card-header"><span class="card-title">Top Categorias</span></div>
         <div class="card-body">
@@ -134,7 +129,6 @@ async function renderDashboard() {
       </div>
     </div>
 
-    <!-- Saldo por obra -->
     <div class="card" style="margin-bottom:16px">
       <div class="card-header">
         <span class="card-title">Saldo por Obra</span>
@@ -162,7 +156,6 @@ async function renderDashboard() {
       </div>
     </div>
 
-    <!-- Últimos Lançamentos -->
     <div class="card">
       <div class="card-header">
         <span class="card-title">Últimos Lançamentos</span>
@@ -258,7 +251,6 @@ async function renderObraDetail(params = {}) {
   <div class="page">
     <button class="back-btn" onclick="App.navigate('obras')">← Voltar para Obras</button>
 
-    <!-- Hero -->
     <div class="card" style="margin-bottom:20px;background:linear-gradient(135deg,var(--blue-900),var(--blue-700));color:white;border:none">
       <div class="card-body">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
@@ -283,11 +275,11 @@ async function renderObraDetail(params = {}) {
       </div>
     </div>
 
-    <!-- Ações -->
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px">
       <button class="btn btn-primary" onclick="showNovoLancamento('${obra.id}')">+ Lançamento</button>
       <button class="btn btn-secondary" onclick="showImportarOC('${obra.id}')">+ Importar OC</button>
       <button class="btn btn-secondary" onclick="showNovaPlanilha('${obra.id}')">+ Planilha</button>
+      <button class="btn btn-secondary" onclick="showEditarObra('${obra.id}')">✏️ Editar Obra</button>
       ${obra.status==='ativa'
         ? `<button class="btn btn-danger btn-sm" onclick="encerrarObra('${obra.id}')">Encerrar Obra</button>`
         : `<button class="btn btn-secondary btn-sm" onclick="reativarObra('${obra.id}')">Reativar</button>`}
@@ -314,7 +306,14 @@ async function renderObraDetail(params = {}) {
                     <div class="progress-fill ${ps<0?'danger':pp<25?'low':''}" style="width:${ps<0?100:pp}%"></div>
                   </div>
                 </div>
-                <div class="planilha-item-saldo ${ps<0?'negative':'positive'}">${fmt(ps)}</div>
+                <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+                  <div class="planilha-item-saldo ${ps<0?'negative':'positive'}">${fmt(ps)}</div>
+                  <div style="display:flex;gap:6px">
+                    <button class="btn-link" onclick="showEditarPlanilha('${p.id}','${obra.id}')">editar</button>
+                    <span style="color:var(--border2)">|</span>
+                    <button class="btn-link danger" onclick="excluirPlanilha('${p.id}','${obra.id}')">excluir</button>
+                  </div>
+                </div>
               </div>`;
             }).join('')}
         </div>
@@ -352,7 +351,6 @@ async function renderObraDetail(params = {}) {
       </div>
     </div>
 
-    <!-- Lançamentos -->
     <div class="card" style="margin-top:16px">
       <div class="card-header">
         <span class="card-title-lg">📊 Lançamentos da Obra</span>
@@ -400,15 +398,15 @@ async function showNovaObra() {
           <label class="form-label">Número da Ação</label>
           <input id="on-acao" class="form-input" placeholder="Ex: 1671" style="font-family:'JetBrains Mono',monospace">
         </div>
-        <div class="form-group">
-          <label class="form-label">Saldo Inicial (R$)</label>
-          <input id="on-saldo" class="form-input" type="number" step="0.01" placeholder="0,00">
-        </div>
       </div>
       <div class="form-group">
         <label class="form-label">Empresa Contratante</label>
-        <input id="on-cont" class="form-input" placeholder="Ex: ENGIX, Murano..." list="conts-dl">
+        <input id="on-cont" class="form-input" placeholder="Ex: ENGIX, Ferreira Santos..." list="conts-dl">
         <datalist id="conts-dl">${conts.map(c=>`<option value="${c.nome}">`).join('')}</datalist>
+      </div>
+      <div class="alert info no-click" style="margin-top:8px">
+        <span class="alert-icon">ℹ</span>
+        <span>O saldo da obra será composto pelo saldo das planilhas adicionadas a ela.</span>
       </div>`,
     footer: `
       <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
@@ -419,15 +417,57 @@ async function showNovaObra() {
 async function salvarObra() {
   const nome  = document.getElementById('on-nome').value.trim();
   const acao  = document.getElementById('on-acao').value.trim();
-  const saldo = parseFloat(document.getElementById('on-saldo').value) || 0;
   const cont  = document.getElementById('on-cont').value.trim();
   if (!nome) return App.toast('Informe o nome da obra', 'error');
   App.loading(true);
   try {
-    await addDoc2('obras', { nome, numero_acao: acao, saldo_inicial: saldo, empresa_contratante: cont, status: 'ativa' });
+    await addDoc2('obras', { nome, numero_acao: acao, saldo_inicial: 0, empresa_contratante: cont, status: 'ativa' });
     closeModal();
     App.toast('Obra criada com sucesso!');
     App.navigate('obras');
+  } catch(e) { App.toast('Erro: '+e.message,'error'); }
+  finally { App.loading(false); }
+}
+
+async function showEditarObra(obraId) {
+  const obra = App.cache.obras.find(o=>o.id===obraId);
+  if (!obra) return;
+  const snap = await empresaCol('empresas_contratantes').get();
+  const conts = snap.docs.map(d=>({id:d.id,...d.data()}));
+
+  showModal({
+    title: 'Editar Obra',
+    body: `
+      <div class="form-group">
+        <label class="form-label">Nome da Obra *</label>
+        <input id="eo-nome" class="form-input" value="${obra.nome}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Número da Ação</label>
+        <input id="eo-acao" class="form-input" value="${obra.numero_acao||''}" style="font-family:'JetBrains Mono',monospace">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Empresa Contratante</label>
+        <input id="eo-cont" class="form-input" value="${obra.empresa_contratante||''}" list="conts-dl2">
+        <datalist id="conts-dl2">${conts.map(c=>`<option value="${c.nome}">`).join('')}</datalist>
+      </div>`,
+    footer: `
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarEdicaoObra('${obraId}')">Salvar</button>`
+  });
+}
+
+async function salvarEdicaoObra(obraId) {
+  const nome = document.getElementById('eo-nome').value.trim();
+  const acao = document.getElementById('eo-acao').value.trim();
+  const cont = document.getElementById('eo-cont').value.trim();
+  if (!nome) return App.toast('Informe o nome', 'error');
+  App.loading(true);
+  try {
+    await updateDoc2('obras', obraId, { nome, numero_acao: acao, empresa_contratante: cont });
+    closeModal();
+    App.toast('Obra atualizada!');
+    App.navigate('obra_detail', { id: obraId });
   } catch(e) { App.toast('Erro: '+e.message,'error'); }
   finally { App.loading(false); }
 }
@@ -464,6 +504,60 @@ async function salvarPlanilha(obraId) {
     await addDoc2('planilhas', { obra_id: obraId, nome, saldo_inicial: saldo, status: 'ativa' });
     closeModal();
     App.toast(`Planilha "${nome}" criada! Saldo +${fmt(saldo)} somado à obra.`);
+    App.navigate('obra_detail', { id: obraId });
+  } catch(e) { App.toast('Erro: '+e.message,'error'); }
+  finally { App.loading(false); }
+}
+
+async function showEditarPlanilha(planilhaId, obraId) {
+  const planilha = App.cache.planilhas.find(p=>p.id===planilhaId);
+  if (!planilha) return;
+  showModal({
+    title: 'Editar Planilha',
+    body: `
+      <div class="form-group">
+        <label class="form-label">Nome da Planilha *</label>
+        <input id="ep-nome" class="form-input" value="${planilha.nome}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Saldo Inicial (R$)</label>
+        <input id="ep-saldo" class="form-input" type="number" step="0.01" value="${planilha.saldo_inicial||0}">
+        <div class="form-hint">Alterar o saldo inicial afeta o saldo disponível da planilha e da obra.</div>
+      </div>`,
+    footer: `
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarEdicaoPlanilha('${planilhaId}','${obraId}')">Salvar</button>`
+  });
+}
+
+async function salvarEdicaoPlanilha(planilhaId, obraId) {
+  const nome  = document.getElementById('ep-nome').value.trim();
+  const saldo = parseFloat(document.getElementById('ep-saldo').value) || 0;
+  if (!nome) return App.toast('Informe o nome', 'error');
+  App.loading(true);
+  try {
+    await updateDoc2('planilhas', planilhaId, { nome, saldo_inicial: saldo });
+    closeModal();
+    App.toast('Planilha atualizada!');
+    App.navigate('obra_detail', { id: obraId });
+  } catch(e) { App.toast('Erro: '+e.message,'error'); }
+  finally { App.loading(false); }
+}
+
+async function excluirPlanilha(planilhaId, obraId) {
+  const planilha = App.cache.planilhas.find(p=>p.id===planilhaId);
+  const temLancs = App.cache.lancamentos.some(l=>l.planilha_id===planilhaId && l.status==='ativo');
+
+  if (temLancs) {
+    return App.toast('Não é possível excluir: esta planilha possui lançamentos ativos. Estorne-os antes.', 'error');
+  }
+
+  if (!confirm(`Excluir a planilha "${planilha?.nome}"?\n\nEsta ação não pode ser desfeita.`)) return;
+
+  App.loading(true);
+  try {
+    await deleteDoc2('planilhas', planilhaId);
+    App.toast('Planilha excluída.');
     App.navigate('obra_detail', { id: obraId });
   } catch(e) { App.toast('Erro: '+e.message,'error'); }
   finally { App.loading(false); }
@@ -531,6 +625,11 @@ async function renderPlanilhas() {
               <div>
                 <div style="font-size:15px;font-weight:700">${p.nome}</div>
                 <div style="font-size:11px;color:var(--text3);margin-top:2px">${o.empresa_contratante||''} · Nº ${o.numero_acao||'—'}</div>
+                <div style="margin-top:8px;display:flex;gap:8px">
+                  <button class="btn-link" onclick="showEditarPlanilha('${p.id}','${o.id}')">editar</button>
+                  <span style="color:var(--border2)">|</span>
+                  <button class="btn-link danger" onclick="excluirPlanilha('${p.id}','${o.id}')">excluir</button>
+                </div>
               </div>
               <div style="text-align:right">
                 <div style="font-size:20px;font-weight:800;font-family:'JetBrains Mono',monospace;color:${s<0?'var(--danger)':'var(--success)'}">${fmt(s)}</div>
@@ -550,15 +649,20 @@ async function renderPlanilhas() {
 }
 
 // Expor
-window.renderDashboard  = renderDashboard;
-window.renderObras      = renderObras;
-window.renderObraDetail = renderObraDetail;
-window.renderPlanilhas  = renderPlanilhas;
-window.showNovaObra     = showNovaObra;
-window.salvarObra       = salvarObra;
-window.showNovaPlanilha = showNovaPlanilha;
-window.salvarPlanilha   = salvarPlanilha;
-window.encerrarObra     = encerrarObra;
-window.reativarObra     = reativarObra;
-window.estornarUI       = estornarUI;
-window.cancelarOC       = cancelarOC;
+window.renderDashboard    = renderDashboard;
+window.renderObras        = renderObras;
+window.renderObraDetail   = renderObraDetail;
+window.renderPlanilhas    = renderPlanilhas;
+window.showNovaObra       = showNovaObra;
+window.salvarObra         = salvarObra;
+window.showEditarObra     = showEditarObra;
+window.salvarEdicaoObra   = salvarEdicaoObra;
+window.showNovaPlanilha   = showNovaPlanilha;
+window.salvarPlanilha     = salvarPlanilha;
+window.showEditarPlanilha = showEditarPlanilha;
+window.salvarEdicaoPlanilha = salvarEdicaoPlanilha;
+window.excluirPlanilha    = excluirPlanilha;
+window.encerrarObra       = encerrarObra;
+window.reativarObra       = reativarObra;
+window.estornarUI         = estornarUI;
+window.cancelarOC         = cancelarOC;

@@ -525,113 +525,130 @@ function exportarHistoricoFunc(funcId) {
 
 // ── CONTROLE DE PRESENÇA ──────────────────────────────────────
 async function renderPresenca() {
-  const { funcionarios, obras } = await loadAll();
+  const { funcionarios } = await loadAll();
   const main = document.getElementById('main-content');
 
   const hoje = today();
+  // Semana atual: segunda a domingo
   const diasSemana = [];
   for (let i=6; i>=0; i--) {
     const d = new Date(); d.setDate(d.getDate()-i);
     diasSemana.push(d.toISOString().split('T')[0]);
   }
 
-  // Carregar presenças do Firestore para esta semana
   const initDate = diasSemana[0];
   let presencas = [];
   try {
-    const snap = await empresaCol('presencas')
-      .where('data', '>=', initDate).get();
+    const snap = await empresaCol('presencas').where('data', '>=', initDate).get();
     presencas = snap.docs.map(d=>({id:d.id,...d.data()}));
   } catch(e) {}
 
   const ativos = funcionarios.filter(f=>f.ativo);
 
   function getStatus(funcId, dia) {
-    const p = presencas.find(p=>p.funcionario_id===funcId && p.data===dia);
-    return p?.status || null;
+    return presencas.find(p=>p.funcionario_id===funcId&&p.data===dia)?.status || null;
   }
 
   const statusCfg = {
-    presente: { icon:'✓', label:'P', cls:'presente' },
-    ausente:  { icon:'✕', label:'F', cls:'ausente' },
-    atestado: { icon:'🏥', label:'A', cls:'atestado' },
-    folga:    { icon:'🌙', label:'Fg', cls:'folga' },
+    presente: { icon:'✓', cls:'presente', cor:'var(--success)' },
+    ausente:  { icon:'✕', cls:'ausente',  cor:'var(--danger)'  },
+    atestado: { icon:'🏥', cls:'atestado', cor:'var(--info)'    },
+    folga:    { icon:'🌙', cls:'folga',    cor:'var(--text3)'   },
   };
-
   const diasShort = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+  const diasNomes = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
+
+  // Totais do período
+  const totalPresentes = ativos.reduce((s,f)=>s+diasSemana.filter(d=>getStatus(f.id,d)==='presente').length,0);
+  const totalFaltas    = ativos.reduce((s,f)=>s+diasSemana.filter(d=>getStatus(f.id,d)==='ausente').length,0);
 
   main.innerHTML = `
   <div class="page">
     <div class="page-header">
-      <div>
-        <button class="back-btn" onclick="App.navigate('funcionarios')">← Funcionários</button>
-        <h1 class="page-title"><div class="page-title-icon">📅</div>Controle de Presença</h1>
-      </div>
+      <h1 class="page-title"><div class="page-title-icon">📅</div>Presença</h1>
       <div class="page-actions">
-        <span style="font-size:12px;color:var(--text3)">Últimos 7 dias</span>
+        <button class="btn btn-secondary btn-sm" onclick="App.navigate('horas_extras')">⏱ Horas Extras</button>
       </div>
     </div>
 
-    <div class="alert info no-click" style="margin-bottom:16px">
-      <span class="alert-icon">ℹ</span>
-      <span>Clique nos botões para registrar: <strong>✓ Presente</strong> · <strong>✕ Falta</strong> · <strong>🏥 Atestado</strong> · <strong>🌙 Folga</strong>. Para diaristas, os dias presentes podem ser usados para calcular pagamento.</span>
+    <!-- Resumo semana -->
+    <div class="stats-grid" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:16px">
+      <div class="stat-card">
+        <div class="stat-card-inner"><div><div class="stat-label">Presenças</div><div class="stat-value green">${totalPresentes}</div></div><div class="stat-icon green">✓</div></div>
+        <div class="stat-label">esta semana</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-inner"><div><div class="stat-label">Faltas</div><div class="stat-value red">${totalFaltas}</div></div><div class="stat-icon red">✕</div></div>
+        <div class="stat-label">esta semana</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-inner"><div><div class="stat-label">Funcionários</div><div class="stat-value">${ativos.length}</div></div><div class="stat-icon blue">👷</div></div>
+        <div class="stat-label">ativos</div>
+      </div>
     </div>
 
-    <!-- Legenda -->
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
-      ${Object.entries(statusCfg).map(([k,v])=>`<span class="badge ${v.cls}">${v.icon} ${k.charAt(0).toUpperCase()+k.slice(1)}</span>`).join('')}
+    <!-- Legenda rápida -->
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+      ${Object.entries(statusCfg).map(([k,v])=>`
+        <span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;background:var(--surface2);border:1px solid var(--border)">
+          ${v.icon} ${k.charAt(0).toUpperCase()+k.slice(1)}
+        </span>`).join('')}
+      <span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;background:var(--surface2);border:1px solid var(--border)">— Não registrado</span>
     </div>
 
-    <div class="card" style="overflow-x:auto">
-      <table class="presence-table">
-        <thead>
-          <tr>
-            <th style="min-width:140px">Funcionário</th>
-            ${diasSemana.map(d=>{
-              const dt=new Date(d+'T12:00:00');
-              return `<th style="min-width:52px">${diasShort[dt.getDay()]}<br><span style="font-size:9px;opacity:.6">${dt.getDate()}/${dt.getMonth()+1}</span></th>`;
-            }).join('')}
-            <th>Resumo</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${ativos.map(f => {
-            const diasP = diasSemana.filter(d => getStatus(f.id,d)==='presente').length;
-            return `
-            <tr>
-              <td>
-                <div style="font-size:13px;font-weight:700">${f.nome}</div>
-                <div><span class="badge ${f.tipo_contrato}" style="margin-top:3px">${f.tipo_contrato}</span></div>
-              </td>
+    <!-- Cards por funcionário (mobile-first) -->
+    ${ativos.length===0 ? '<div class="empty-state"><span class="empty-icon">👷</span><p>Nenhum funcionário ativo.</p></div>' :
+      ativos.map(f => {
+        const diasP = diasSemana.filter(d=>getStatus(f.id,d)==='presente').length;
+        const diasF = diasSemana.filter(d=>getStatus(f.id,d)==='ausente').length;
+        return `
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-header" style="padding:12px 14px 8px">
+            <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
+              <div class="func-avatar" style="width:36px;height:36px;font-size:13px;flex-shrink:0">${f.nome.split(' ').map(n=>n[0]).slice(0,2).join('').toUpperCase()}</div>
+              <div style="min-width:0">
+                <div style="font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${f.nome}</div>
+                <div style="display:flex;gap:6px;align-items:center;margin-top:2px;flex-wrap:wrap">
+                  <span class="badge ${f.tipo_contrato}" style="font-size:10px">${f.tipo_contrato}</span>
+                  <span style="font-size:11px;color:var(--success);font-weight:600">${diasP}P</span>
+                  ${diasF>0?`<span style="font-size:11px;color:var(--danger);font-weight:600">${diasF}F</span>`:''}
+                </div>
+              </div>
+            </div>
+            ${f.tipo_contrato==='diarista'&&diasP>0?`
+            <button class="btn btn-primary btn-sm" onclick="pagarDiasPresenca('${f.id}',${diasP},${f.valor_base})">
+              💰 ${diasP}d
+            </button>`:''}
+          </div>
+          <div class="card-body" style="padding:8px 14px 12px">
+            <!-- Grid de dias: 7 colunas -->
+            <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px">
               ${diasSemana.map(d => {
-                const s = getStatus(f.id, d);
+                const dt  = new Date(d+'T12:00:00');
+                const s   = getStatus(f.id, d);
                 const cfg = s ? statusCfg[s] : null;
+                const isHoje = d === hoje;
                 return `
-                <td>
-                  <div style="display:flex;flex-direction:column;gap:3px;align-items:center">
-                    <button class="presence-btn ${s||''}" onclick="togglePresenca('${f.id}','${d}',this)"
-                      title="${s||'Não registrado'}">
-                      ${cfg ? cfg.icon : '—'}
-                    </button>
-                  </div>
-                </td>`;
+                <div style="display:flex;flex-direction:column;align-items:center;gap:3px">
+                  <span style="font-size:9px;color:${isHoje?'var(--blue-500)':'var(--text3)'};font-weight:${isHoje?'700':'400'}">${diasShort[dt.getDay()]}</span>
+                  <span style="font-size:9px;color:var(--text3)">${dt.getDate()}/${dt.getMonth()+1}</span>
+                  <button class="presence-btn ${s||''}"
+                    onclick="togglePresenca('${f.id}','${d}',this)"
+                    style="width:38px;height:38px;font-size:16px;${isHoje?'box-shadow:0 0 0 2px var(--blue-400)':''}"
+                    title="${diasNomes[dt.getDay()]} ${dt.getDate()}/${dt.getMonth()+1}">
+                    ${cfg ? cfg.icon : '<span style=\'font-size:10px;color:var(--text3)\'>—</span>'}
+                  </button>
+                </div>`;
               }).join('')}
-              <td>
-                <div style="font-size:11px;font-weight:700;color:var(--blue-600)">${diasP} dias</div>
-                ${f.tipo_contrato==='diarista' ? `
-                <div style="font-size:10px;color:var(--text3)">${fmt(diasP*f.valor_base)}</div>
-                <button class="btn-link" style="font-size:10px" onclick="pagarDiasPresenca('${f.id}',${diasP},${f.valor_base})">Gerar pgto</button>
-                ` : ''}
-              </td>
-            </tr>`;
-          }).join('')}
-        </tbody>
-      </table>
-    </div>
-
-    <div style="margin-top:16px;font-size:12px;color:var(--text3);text-align:center">
-      Os dados de presença ficam salvos e podem ser consultados a qualquer momento. Futuramente poderão ser integrados ao sistema de pagamentos.
-    </div>
+            </div>
+            ${f.tipo_contrato==='diarista'?`
+            <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+              <span style="font-size:11px;color:var(--text2)">${diasP} dias × ${fmt(f.valor_base)}</span>
+              <span style="font-size:13px;font-weight:700;color:var(--success)">${fmt(diasP*f.valor_base)}</span>
+            </div>`:''}
+          </div>
+        </div>`;
+      }).join('')}
   </div>`;
 }
 
@@ -1429,6 +1446,342 @@ async function confirmarNovoLanc() {
 
 
 
+
+// ── HORAS EXTRAS ──────────────────────────────────────────────
+async function renderHorasExtras() {
+  const { funcionarios, obras } = await loadAll();
+  const main = document.getElementById('main-content');
+
+  const hoje = today();
+  const inicioMes = hoje.substring(0,7)+'-01';
+
+  // Busca registros de horas extras do mês atual
+  let registros = [];
+  try {
+    const snap = await empresaCol('horas_extras')
+      .where('data','>=',inicioMes).get();
+    registros = snap.docs.map(d=>({id:d.id,...d.data()}));
+  } catch(e) {}
+
+  const ativos = funcionarios.filter(f=>f.ativo);
+
+  // Totais do mês
+  const totalHoras = registros.reduce((s,r)=>s+(r.horas||0),0);
+  const totalValor = registros.reduce((s,r)=>s+(r.valor_calculado||0),0);
+
+  main.innerHTML = `
+  <div class="page">
+    <div class="page-header">
+      <h1 class="page-title"><div class="page-title-icon">⏱</div>Horas Extras</h1>
+      <div class="page-actions">
+        <button class="btn btn-secondary btn-sm" onclick="App.navigate('presenca')">← Presença</button>
+        <button class="btn btn-primary" onclick="showRegistrarHoraExtra()">+ Registrar</button>
+      </div>
+    </div>
+
+    <!-- Resumo do mês -->
+    <div class="stats-grid" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:16px">
+      <div class="stat-card">
+        <div class="stat-card-inner"><div><div class="stat-label">Total de Horas</div><div class="stat-value">${totalHoras.toFixed(1)}h</div></div><div class="stat-icon blue">⏱</div></div>
+        <div class="stat-label">este mês</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-inner"><div><div class="stat-label">Valor Total</div><div class="stat-value sm green">${fmt(totalValor)}</div></div><div class="stat-icon green">💰</div></div>
+        <div class="stat-label">a pagar</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-inner"><div><div class="stat-label">Registros</div><div class="stat-value">${registros.length}</div></div><div class="stat-icon blue">📋</div></div>
+        <div class="stat-label">este mês</div>
+      </div>
+    </div>
+
+    <!-- Por funcionário -->
+    ${ativos.map(f => {
+      const regsFunc = registros.filter(r=>r.funcionario_id===f.id)
+        .sort((a,b)=>b.data.localeCompare(a.data));
+      if (regsFunc.length === 0) return '';
+      const totalH = regsFunc.reduce((s,r)=>s+(r.horas||0),0);
+      const totalV = regsFunc.reduce((s,r)=>s+(r.valor_calculado||0),0);
+      const jaPago = regsFunc.filter(r=>r.pago).reduce((s,r)=>s+(r.valor_calculado||0),0);
+      const apagar = totalV - jaPago;
+
+      return `
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-header">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="func-avatar" style="width:36px;height:36px;font-size:13px">${f.nome.split(' ').map(n=>n[0]).slice(0,2).join('').toUpperCase()}</div>
+            <div>
+              <div style="font-size:14px;font-weight:700">${f.nome}</div>
+              <div style="font-size:11px;color:var(--text3)">${totalH.toFixed(1)}h · ${fmt(totalV)} este mês</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            ${apagar>0?`<span style="font-size:12px;color:var(--warning);font-weight:700">${fmt(apagar)} a pagar</span>`:'<span style="font-size:11px;color:var(--success)">✓ Quitado</span>'}
+            <button class="btn btn-primary btn-sm" onclick="pagarHorasExtras('${f.id}')">Pagar Extras</button>
+          </div>
+        </div>
+        <div class="card-body">
+          ${regsFunc.slice(0,8).map(r => {
+            const obra = obras.find(o=>o.id===r.obra_id);
+            const dt   = new Date(r.data+'T12:00:00');
+            return `
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);gap:8px">
+              <div style="flex:1;min-width:0">
+                <div style="font-size:13px;font-weight:600">${dt.toLocaleDateString('pt-BR',{weekday:'short',day:'numeric',month:'short'})}</div>
+                <div style="font-size:11px;color:var(--text3)">${obra?.nome||'—'} · ${r.descricao||''}</div>
+              </div>
+              <div style="text-align:right;flex-shrink:0">
+                <div style="font-size:13px;font-weight:700;color:var(--blue-600)">${r.horas}h</div>
+                <div style="font-size:11px;color:var(--success)">${fmt(r.valor_calculado)}</div>
+              </div>
+              <div style="display:flex;gap:4px;flex-shrink:0">
+                ${r.pago?'<span class="badge ativa" style="font-size:9px">pago</span>':`
+                  <button class="btn-link danger" style="font-size:11px" onclick="excluirHoraExtra('${r.id}')">excluir</button>`}
+              </div>
+            </div>`;
+          }).join('')}
+          ${regsFunc.length>8?`<div style="font-size:11px;color:var(--text3);text-align:center;padding-top:8px">+${regsFunc.length-8} registros mais antigos</div>`:''}
+        </div>
+      </div>`;
+    }).join('')}
+
+    ${registros.length===0?`
+    <div class="empty-state">
+      <span class="empty-icon">⏱</span>
+      <p>Nenhuma hora extra registrada este mês.</p>
+      <button class="btn btn-primary" onclick="showRegistrarHoraExtra()">Registrar primeiro</button>
+    </div>`:''}
+  </div>`;
+
+  window._heData = { funcionarios: ativos, obras };
+}
+
+async function showRegistrarHoraExtra() {
+  const funcs = App.cache.funcionarios.filter(f=>f.ativo);
+  const obras  = App.cache.obras.filter(o=>o.status==='ativa');
+
+  showModal({
+    title: '⏱ Registrar Horas Extras',
+    body: `
+      <div class="form-group">
+        <label class="form-label">Funcionário *</label>
+        <select id="he-func" class="form-input" onchange="calcularValorHE()">
+          <option value="">— Selecione —</option>
+          ${funcs.map(f=>`<option value="${f.id}" data-base="${f.valor_base}" data-contrato="${f.tipo_contrato}">${f.nome} (${f.tipo_contrato})</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Data *</label>
+          <input id="he-data" class="form-input" type="date" value="${today()}" onchange="calcularValorHE()">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Horas Extras *</label>
+          <input id="he-horas" class="form-input" type="number" step="0.5" min="0.5" max="12" placeholder="2.0" oninput="calcularValorHE()">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Adicional sobre hora normal</label>
+        <select id="he-adicional" class="form-input" onchange="calcularValorHE()">
+          <option value="50">50% — Hora extra padrão (CLT)</option>
+          <option value="100">100% — Feriado / Domingo</option>
+          <option value="0">0% — Sem adicional (valor fixo)</option>
+          <option value="custom">Outro %</option>
+        </select>
+      </div>
+      <div id="he-custom-grp" style="display:none">
+        <div class="form-group">
+          <label class="form-label">Percentual personalizado (%)</label>
+          <input id="he-pct-custom" class="form-input" type="number" min="0" max="200" placeholder="75" oninput="calcularValorHE()">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Obra *</label>
+        <select id="he-obra" class="form-input">
+          <option value="">— Selecione —</option>
+          ${obras.map(o=>`<option value="${o.id}">${o.nome}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Observação</label>
+        <input id="he-desc" class="form-input" placeholder="Ex: Reforço para entrega do prazo">
+      </div>
+      <!-- Preview do cálculo -->
+      <div id="he-preview" style="background:var(--surface2);border-radius:10px;padding:14px;margin-top:4px;display:none">
+        <div style="font-size:12px;color:var(--text3);margin-bottom:6px">Cálculo automático</div>
+        <div id="he-calc-detalhe" style="font-size:13px;color:var(--text2)"></div>
+        <div id="he-calc-total" style="font-size:18px;font-weight:800;color:var(--success);margin-top:6px"></div>
+      </div>`,
+    footer: `
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarHoraExtra()">Registrar</button>`
+  });
+
+  // Listener para opção "Outro %"
+  document.getElementById('he-adicional').addEventListener('change', function() {
+    document.getElementById('he-custom-grp').style.display = this.value==='custom' ? '' : 'none';
+    calcularValorHE();
+  });
+}
+
+function calcularValorHE() {
+  const sel    = document.getElementById('he-func');
+  const horas  = parseFloat(document.getElementById('he-horas')?.value)||0;
+  const adicEl = document.getElementById('he-adicional');
+  if (!sel?.value || horas<=0) { document.getElementById('he-preview').style.display='none'; return; }
+
+  const opt       = sel.options[sel.selectedIndex];
+  const valorBase = parseFloat(opt.dataset.base)||0;
+  const contrato  = opt.dataset.contrato;
+
+  // Valor hora normal: mensalistas ÷ 220h, diaristas ÷ 8h
+  const valorHoraNormal = contrato==='diarista' ? valorBase/8 : valorBase/220;
+
+  let pct = parseFloat(adicEl?.value)||50;
+  if (adicEl?.value==='custom') {
+    pct = parseFloat(document.getElementById('he-pct-custom')?.value)||0;
+  }
+
+  const valorHoraExtra = valorHoraNormal * (1 + pct/100);
+  const total = valorHoraExtra * horas;
+
+  const preview = document.getElementById('he-preview');
+  const detalhe = document.getElementById('he-calc-detalhe');
+  const totalEl = document.getElementById('he-calc-total');
+
+  if (preview) preview.style.display = '';
+  if (detalhe) detalhe.innerHTML = `
+    Hora normal: ${fmt(valorHoraNormal)} × adicional ${pct}% = <strong>${fmt(valorHoraExtra)}/h</strong><br>
+    ${horas}h × ${fmt(valorHoraExtra)} =
+  `;
+  if (totalEl) totalEl.textContent = fmt(total);
+
+  // Guarda para salvar
+  window._heValorCalculado = total;
+  window._heValorHora = valorHoraExtra;
+}
+
+async function salvarHoraExtra() {
+  const funcId = document.getElementById('he-func')?.value;
+  const data   = document.getElementById('he-data')?.value;
+  const horas  = parseFloat(document.getElementById('he-horas')?.value)||0;
+  const obraId = document.getElementById('he-obra')?.value;
+  const desc   = document.getElementById('he-desc')?.value.trim();
+
+  if (!funcId || !data || horas<=0 || !obraId) return App.toast('Preencha todos os campos obrigatórios','error');
+  if (!window._heValorCalculado) return App.toast('Aguarde o cálculo automático','error');
+
+  const func = App.cache.funcionarios.find(f=>f.id===funcId);
+  App.loading(true);
+  try {
+    await addDoc2('horas_extras', {
+      funcionario_id:   funcId,
+      funcionario_nome: func?.nome||'',
+      obra_id:          obraId,
+      data,
+      horas,
+      valor_hora:       window._heValorHora||0,
+      valor_calculado:  window._heValorCalculado,
+      descricao:        desc,
+      pago:             false,
+    });
+    closeModal();
+    App.toast(`${horas}h extras registradas — ${fmt(window._heValorCalculado)}`);
+    App.navigate('horas_extras');
+  } catch(e) { App.toast('Erro: '+e.message,'error'); }
+  finally { App.loading(false); }
+}
+
+async function pagarHorasExtras(funcId) {
+  const func = App.cache.funcionarios.find(f=>f.id===funcId);
+  if (!func) return;
+
+  // Busca registros não pagos do mês
+  const inicioMes = today().substring(0,7)+'-01';
+  const snap = await empresaCol('horas_extras')
+    .where('funcionario_id','==',funcId)
+    .where('pago','==',false)
+    .where('data','>=',inicioMes).get();
+
+  const pendentes = snap.docs.map(d=>({id:d.id,...d.data()}));
+  const totalHoras = pendentes.reduce((s,r)=>s+(r.horas||0),0);
+  const totalValor = pendentes.reduce((s,r)=>s+(r.valor_calculado||0),0);
+
+  if (pendentes.length===0) return App.toast('Não há horas extras pendentes de pagamento este mês.','info');
+
+  const obras = App.cache.obras;
+  // Usa a obra mais frequente nos registros
+  const obraContagem = {};
+  pendentes.forEach(r=>{ obraContagem[r.obra_id]=(obraContagem[r.obra_id]||0)+1; });
+  const obraIdPrinc = Object.entries(obraContagem).sort((a,b)=>b[1]-a[1])[0]?.[0];
+
+  showModal({
+    title: `Pagar Horas Extras — ${func.nome}`,
+    body: `
+      <div class="stat-card" style="margin-bottom:16px;padding:16px">
+        <div style="font-size:13px;color:var(--text2);margin-bottom:4px">${pendentes.length} registros · ${totalHoras.toFixed(1)} horas</div>
+        <div style="font-size:24px;font-weight:800;color:var(--success)">${fmt(totalValor)}</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Obra para debitar *</label>
+        <select id="hepg-obra" class="form-input">
+          ${obras.filter(o=>o.status==='ativa').map(o=>`<option value="${o.id}" ${o.id===obraIdPrinc?'selected':''}>${o.nome}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Forma de Pagamento</label>
+        <select id="hepg-forma" class="form-input">
+          ${['PIX','Dinheiro','Transferência','Vale','Cheque'].map(f=>`<option>${f}</option>`).join('')}
+        </select>
+      </div>`,
+    footer: `
+      <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmarPagamentoHE('${funcId}',${JSON.stringify(pendentes.map(r=>r.id))},${totalValor})">Confirmar Pagamento</button>`
+  });
+}
+
+async function confirmarPagamentoHE(funcId, ids, total) {
+  const obraId = document.getElementById('hepg-obra')?.value;
+  const forma  = document.getElementById('hepg-forma')?.value;
+  const func   = App.cache.funcionarios.find(f=>f.id===funcId);
+  if (!obraId) return App.toast('Selecione a obra','error');
+
+  App.loading(true);
+  try {
+    // Marca registros como pagos
+    for (const id of ids) {
+      await updateDoc2('horas_extras', id, { pago: true, data_pagamento: today() });
+    }
+    // Gera lançamento de despesa
+    await addDoc2('lancamentos', {
+      obra_id:         obraId,
+      planilha_id:     null,
+      tipo:            'despesa',
+      categoria:       'Folha',
+      valor:           total,
+      descricao:       `Horas extras — ${func?.nome||''} (${ids.length} registros)`,
+      forma_pagamento: forma,
+      origem:          'funcionarios',
+      status:          'ativo',
+    });
+    closeModal();
+    App.toast(`Pagamento de ${fmt(total)} registrado!`);
+    App.navigate('horas_extras');
+  } catch(e) { App.toast('Erro: '+e.message,'error'); }
+  finally { App.loading(false); }
+}
+
+async function excluirHoraExtra(id) {
+  if (!confirm('Excluir este registro de hora extra?')) return;
+  App.loading(true);
+  try {
+    await deleteDoc2('horas_extras', id);
+    App.toast('Registro excluído.');
+    App.navigate('horas_extras');
+  } catch(e) { App.toast('Erro: '+e.message,'error'); }
+  finally { App.loading(false); }
+}
+
 // ── EXPOR GLOBALMENTE ─────────────────────────────────────────
 window.renderFuncionarios    = renderFuncionarios;
 window.renderPresenca        = renderPresenca;
@@ -1469,3 +1822,10 @@ window.carregarPlanilhasNL   = carregarPlanilhasNL;
 window.confirmarNovoLanc     = confirmarNovoLanc;
 window.showHistoricoPagamentos = showHistoricoPagamentos;
 window.exportarHistoricoFunc   = exportarHistoricoFunc;
+window.renderHorasExtras       = renderHorasExtras;
+window.showRegistrarHoraExtra  = showRegistrarHoraExtra;
+window.calcularValorHE         = calcularValorHE;
+window.salvarHoraExtra         = salvarHoraExtra;
+window.pagarHorasExtras        = pagarHorasExtras;
+window.confirmarPagamentoHE    = confirmarPagamentoHE;
+window.excluirHoraExtra        = excluirHoraExtra;

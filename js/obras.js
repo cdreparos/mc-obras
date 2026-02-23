@@ -108,6 +108,9 @@ async function renderDashboard() {
       </div>
     </div>
   </div>`;
+
+  // Verifica alertas de saldo crítico após render
+  setTimeout(() => { if (typeof verificarSaldoCritico === 'function') verificarSaldoCritico(); }, 200);
 }
 
 // ── OBRAS ─────────────────────────────────────────────────────

@@ -54,6 +54,8 @@ async function renderFuncionarios() {
                   <div style="text-align:right;margin-top:6px;display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
                     <button class="btn-link" onclick="showPagamento('${f.id}')">Pagar</button>
                     <span style="color:var(--border2)">|</span>
+                    <button class="btn-link" onclick="showHistoricoPagamentos('${f.id}')">Histórico</button>
+                    <span style="color:var(--border2)">|</span>
                     <button class="btn-link" onclick="showEditarAloc('${f.id}')">Alocar</button>
                     <span style="color:var(--border2)">|</span>
                     <button class="btn-link" onclick="showEditarFuncionario('${f.id}')">Editar</button>
@@ -430,6 +432,94 @@ async function reativarFunc(id) {
   await updateDoc2('funcionarios', id, { ativo: true });
   App.toast('Funcionário reativado!');
   App.navigate('funcionarios');
+}
+
+async function showHistoricoPagamentos(funcId) {
+  const func = App.cache.funcionarios.find(f=>f.id===funcId);
+  if (!func) return;
+
+  App.loading(true);
+  try {
+    const snap = await empresaCol('lancamentos')
+      .where('origem','==','funcionarios')
+      .where('status','==','ativo')
+      .get();
+
+    const pagamentos = snap.docs
+      .map(d=>({id:d.id,...d.data()}))
+      .filter(l => l.descricao && l.descricao.includes(func.nome))
+      .sort((a,b)=>(b.created_at?.toDate?.()||0)-(a.created_at?.toDate?.()||0));
+
+    const total = pagamentos.reduce((s,l)=>s+(l.valor||0),0);
+    const obras = App.cache.obras;
+
+    showModal({
+      title: `Histórico — ${func.nome}`,
+      wide: true,
+      body: `
+        <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap">
+          <div class="stat-card" style="flex:1;min-width:120px;padding:12px">
+            <div class="stat-label">Total Pago</div>
+            <div class="stat-value sm green">${fmt(total)}</div>
+          </div>
+          <div class="stat-card" style="flex:1;min-width:120px;padding:12px">
+            <div class="stat-label">Pagamentos</div>
+            <div class="stat-value">${pagamentos.length}</div>
+          </div>
+          <div class="stat-card" style="flex:1;min-width:120px;padding:12px">
+            <div class="stat-label">Contrato</div>
+            <div class="stat-value" style="font-size:14px">${func.tipo_contrato}</div>
+          </div>
+        </div>
+        ${pagamentos.length===0
+          ? '<div class="empty">Nenhum pagamento registrado</div>'
+          : `<div style="max-height:380px;overflow-y:auto">
+              ${pagamentos.map(l=>{
+                const obra = obras.find(o=>o.id===l.obra_id);
+                return `<div class="lanc-row">
+                  <div class="lanc-icon func">👷</div>
+                  <div class="lanc-info">
+                    <div class="lanc-desc">${l.descricao||''}</div>
+                    <div class="lanc-meta">${obra?.nome||''} · ${fmtDate(l.created_at)}</div>
+                    <div class="lanc-tags"><span class="tag">${l.categoria||''}</span>${l.forma_pagamento?`<span class="tag">${l.forma_pagamento}</span>`:''}</div>
+                  </div>
+                  <div class="lanc-right">
+                    <div class="lanc-value despesa">-${fmt(l.valor)}</div>
+                  </div>
+                </div>`;
+              }).join('')}
+            </div>`}`,
+      footer: `
+        <button class="btn btn-secondary" onclick="exportarHistoricoFunc('${funcId}')">⬇ Exportar CSV</button>
+        <button class="btn btn-primary" onclick="closeModal()">Fechar</button>`
+    });
+  } finally {
+    App.loading(false);
+  }
+}
+
+function exportarHistoricoFunc(funcId) {
+  const func = App.cache.funcionarios.find(f=>f.id===funcId);
+  if (!func) return;
+  const pagamentos = App.cache.lancamentos
+    .filter(l=>l.origem==='funcionarios'&&l.status==='ativo'&&l.descricao?.includes(func.nome))
+    .sort((a,b)=>(b.created_at?.toDate?.()||0)-(a.created_at?.toDate?.()||0));
+  const obras = App.cache.obras;
+  const total = pagamentos.reduce((s,l)=>s+(l.valor||0),0);
+  let csv = `Historico de Pagamentos - ${func.nome}\n`;
+  csv += `Contrato: ${func.tipo_contrato} | Valor Base: ${func.valor_base}\n\n`;
+  csv += `Data,Descricao,Obra,Categoria,Forma Pagamento,Valor\n`;
+  pagamentos.forEach(l => {
+    const obra = obras.find(o=>o.id===l.obra_id);
+    csv += `"${fmtDate(l.created_at)}","${l.descricao||''}","${obra?.nome||''}","${l.categoria||''}","${l.forma_pagamento||''}","${(l.valor||0).toFixed(2)}"\n`;
+  });
+  csv += `\nTOTAL PAGO,,,,,"${total.toFixed(2)}"\n`;
+  const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href=url; a.download=`historico-${func.nome.replace(/\s+/g,'-').toLowerCase()}.csv`; a.click();
+  URL.revokeObjectURL(url);
+  App.toast('Exportado!');
 }
 
 
@@ -1052,55 +1142,132 @@ async function renderLancamentos() {
   const { lancamentos, obras, planilhas } = await loadAll();
   const main = document.getElementById('main-content');
 
+  // Período padrão: início do mês atual
+  const hoje    = new Date();
+  const inicioMes = `${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-01`;
+  const hojeStr   = today();
+
+  // Totais rápidos
+  const ativos = lancamentos.filter(l=>l.status==='ativo');
+  const totalDesp = ativos.filter(l=>l.tipo==='despesa').reduce((s,l)=>s+(l.valor||0),0);
+  const totalRec  = ativos.filter(l=>l.tipo==='receita').reduce((s,l)=>s+(l.valor||0),0);
+
   main.innerHTML = `
   <div class="page">
     <div class="page-header">
       <h1 class="page-title"><div class="page-title-icon">📊</div>Lançamentos</h1>
       <div class="page-actions">
-        <button class="btn btn-primary" onclick="showNovoLancamento()">+ Novo</button>
+        ${App.podeAgir('lancar')?`<button class="btn btn-primary" onclick="showNovoLancamento()">+ Novo</button>`:''}
       </div>
     </div>
 
-    <div class="filter-row">
-      <select id="fl-obra" class="form-input" onchange="filtrarLancs()">
-        <option value="">Todas as obras</option>
-        ${obras.map(o=>`<option value="${o.id}">${o.nome}</option>`).join('')}
-      </select>
-      <select id="fl-origem" class="form-input" onchange="filtrarLancs()">
-        <option value="">Todas as origens</option>
-        <option value="ordem_compra">Ordem de Compra</option>
-        <option value="funcionarios">Funcionários</option>
-        <option value="repasse">Repasse</option>
-        <option value="manual">Manual</option>
-      </select>
-      <select id="fl-tipo" class="form-input" onchange="filtrarLancs()">
-        <option value="">Todos os tipos</option>
-        <option value="despesa">Despesas</option>
-        <option value="receita">Receitas</option>
-      </select>
+    <!-- Totais rápidos -->
+    <div class="stats-grid" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:16px">
+      <div class="stat-card">
+        <div class="stat-card-inner"><div><div class="stat-label">Total Despesas</div><div class="stat-value sm red">${fmt(totalDesp)}</div></div><div class="stat-icon red">📉</div></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-inner"><div><div class="stat-label">Total Receitas</div><div class="stat-value sm green">${fmt(totalRec)}</div></div><div class="stat-icon green">📈</div></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-card-inner"><div><div class="stat-label">Saldo Período</div><div class="stat-value sm ${totalRec-totalDesp>=0?'green':'red'}">${fmt(totalRec-totalDesp)}</div></div><div class="stat-icon blue">⚖️</div></div>
+      </div>
+    </div>
+
+    <!-- Filtros -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-body" style="padding:14px">
+        <div class="filter-row" style="flex-wrap:wrap;gap:8px">
+          <select id="fl-obra" class="form-input" style="flex:1;min-width:140px" onchange="filtrarLancs()">
+            <option value="">Todas as obras</option>
+            ${obras.map(o=>`<option value="${o.id}">${o.nome}</option>`).join('')}
+          </select>
+          <select id="fl-origem" class="form-input" style="flex:1;min-width:130px" onchange="filtrarLancs()">
+            <option value="">Todas as origens</option>
+            <option value="ordem_compra">Ordem de Compra</option>
+            <option value="funcionarios">Funcionários</option>
+            <option value="repasse">Repasse</option>
+            <option value="manual">Manual</option>
+          </select>
+          <select id="fl-tipo" class="form-input" style="flex:1;min-width:120px" onchange="filtrarLancs()">
+            <option value="">Todos os tipos</option>
+            <option value="despesa">Despesas</option>
+            <option value="receita">Receitas</option>
+          </select>
+        </div>
+        <div class="filter-row" style="flex-wrap:wrap;gap:8px;margin-top:8px;align-items:center">
+          <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:200px">
+            <label style="font-size:12px;color:var(--text2);white-space:nowrap">De:</label>
+            <input id="fl-data-ini" class="form-input" type="date" value="${inicioMes}" onchange="filtrarLancs()" style="flex:1">
+            <label style="font-size:12px;color:var(--text2);white-space:nowrap">Até:</label>
+            <input id="fl-data-fim" class="form-input" type="date" value="${hojeStr}" onchange="filtrarLancs()" style="flex:1">
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-secondary btn-sm" onclick="filtrarPeriodo('mes')">Este mês</button>
+            <button class="btn btn-secondary btn-sm" onclick="filtrarPeriodo('trimestre')">Trimestre</button>
+            <button class="btn btn-secondary btn-sm" onclick="filtrarPeriodo('tudo')">Tudo</button>
+          </div>
+        </div>
+        <div id="fl-resumo" style="font-size:11px;color:var(--text3);margin-top:8px;text-align:right"></div>
+      </div>
     </div>
 
     <div class="card" id="lancs-container">
-      <div class="card-body">${renderLancList(lancamentos.filter(l=>l.status==='ativo'), obras, planilhas)}</div>
+      <div class="card-body"></div>
     </div>
   </div>`;
 
   window._lancsData = { lancamentos, obras, planilhas };
+  filtrarLancs();
+}
+
+function filtrarPeriodo(tipo) {
+  const hoje = new Date();
+  let ini, fim = today();
+  if (tipo === 'mes') {
+    ini = `${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-01`;
+  } else if (tipo === 'trimestre') {
+    const d = new Date(hoje); d.setMonth(d.getMonth()-3);
+    ini = d.toISOString().split('T')[0];
+  } else {
+    ini = '2020-01-01';
+    fim = today();
+  }
+  document.getElementById('fl-data-ini').value = ini;
+  document.getElementById('fl-data-fim').value = fim;
+  filtrarLancs();
 }
 
 function filtrarLancs() {
   const obraF   = document.getElementById('fl-obra')?.value;
   const origemF = document.getElementById('fl-origem')?.value;
   const tipoF   = document.getElementById('fl-tipo')?.value;
+  const dataIni = document.getElementById('fl-data-ini')?.value;
+  const dataFim = document.getElementById('fl-data-fim')?.value;
   const { lancamentos, obras, planilhas } = window._lancsData;
 
   const filtrados = lancamentos.filter(l => {
     if (l.status !== 'ativo') return false;
-    if (obraF   && l.obra_id  !== obraF)   return false;
-    if (origemF && l.origem   !== origemF)  return false;
-    if (tipoF   && l.tipo     !== tipoF)    return false;
+    if (obraF   && l.obra_id !== obraF)   return false;
+    if (origemF && l.origem  !== origemF)  return false;
+    if (tipoF   && l.tipo    !== tipoF)    return false;
+    if (dataIni || dataFim) {
+      const d = l.created_at?.toDate?.() || null;
+      if (d) {
+        const ds = d.toISOString().split('T')[0];
+        if (dataIni && ds < dataIni) return false;
+        if (dataFim && ds > dataFim) return false;
+      }
+    }
     return true;
   });
+
+  // Atualiza resumo
+  const desp = filtrados.filter(l=>l.tipo==='despesa').reduce((s,l)=>s+(l.valor||0),0);
+  const rec  = filtrados.filter(l=>l.tipo==='receita').reduce((s,l)=>s+(l.valor||0),0);
+  const resumoEl = document.getElementById('fl-resumo');
+  if (resumoEl) resumoEl.innerHTML =
+    `${filtrados.length} lançamento${filtrados.length!==1?'s':''} · Despesas: <strong style="color:var(--danger)">${fmt(desp)}</strong> · Receitas: <strong style="color:var(--success)">${fmt(rec)}</strong> · Saldo: <strong style="color:${rec-desp>=0?'var(--success)':'var(--danger)'}">${fmt(rec-desp)}</strong>`;
 
   document.querySelector('#lancs-container .card-body').innerHTML = renderLancList(filtrados, obras, planilhas);
 }
@@ -1294,8 +1461,11 @@ window.confirmarImportacaoOC = confirmarImportacaoOC;
 window.forcarImportacaoOC    = forcarImportacaoOC;
 window.cancelarOCGlobal      = cancelarOCGlobal;
 window.filtrarLancs          = filtrarLancs;
+window.filtrarPeriodo        = filtrarPeriodo;
 window.estornarLancUI        = estornarLancUI;
 window.showNovoLancamento    = showNovoLancamento;
 window.setTipoLanc           = setTipoLanc;
 window.carregarPlanilhasNL   = carregarPlanilhasNL;
 window.confirmarNovoLanc     = confirmarNovoLanc;
+window.showHistoricoPagamentos = showHistoricoPagamentos;
+window.exportarHistoricoFunc   = exportarHistoricoFunc;

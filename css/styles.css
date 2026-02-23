@@ -1031,25 +1031,19 @@ select.form-input {
   background: rgba(15,23,42,.5);
   z-index: 300;
   display: none;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
+  padding: 20px;
   animation: fadeIn .15s;
 }
 
-#modal-overlay.centered { align-items: center; padding: 20px; }
-
 .modal {
   background: var(--surface);
-  border-radius: 20px 20px 0 0;
+  border-radius: 20px;
   width: 100%;
   max-width: 520px;
-  max-height: 92vh;
+  max-height: 88vh;
   overflow-y: auto;
-  animation: slideUp .2s cubic-bezier(.4,0,.2,1);
-}
-
-#modal-overlay.centered .modal {
-  border-radius: 20px;
   animation: scaleIn .2s cubic-bezier(.4,0,.2,1);
 }
 

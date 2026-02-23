@@ -200,9 +200,10 @@ async function renderObraDetail(params={}) {
       ${podeLancar?`<button class="btn btn-primary" onclick="showNovoLancamento('${obra.id}')">+ Lançamento</button>`:''}
       ${podeLancar?`<button class="btn btn-secondary" onclick="showImportarOC('${obra.id}')">+ Importar OC</button>`:''}
       ${isAdmin?`<button class="btn btn-secondary" onclick="showNovaPlanilha('${obra.id}')">+ Planilha</button>`:''}
-      ${podeEditar?`<button class="btn btn-secondary" onclick="showEditarObra('${obra.id}')">✏️ Editar Obra</button>`:''}
-      ${isAdmin&&obra.status==='ativa'?`<button class="btn btn-danger btn-sm" onclick="encerrarObra('${obra.id}')">Encerrar Obra</button>`:''}
+      ${podeEditar?`<button class="btn btn-secondary" onclick="showEditarObra('${obra.id}')">✏️ Editar</button>`:''}
+      ${isAdmin&&obra.status==='ativa'?`<button class="btn btn-danger btn-sm" onclick="encerrarObra('${obra.id}')">Encerrar</button>`:''}
       ${isAdmin&&obra.status!=='ativa'?`<button class="btn btn-secondary btn-sm" onclick="reativarObra('${obra.id}')">Reativar</button>`:''}
+      ${isAdmin?`<button class="btn btn-danger btn-sm" onclick="excluirObra('${obra.id}','${obra.nome.replace(/'/g,"\\'")}')">🗑 Excluir</button>`:''}
     </div>
 
     <div class="dash-grid">
@@ -417,6 +418,40 @@ async function reativarObra(id) {
   App.toast('Obra reativada!'); App.navigate('obra_detail',{id});
 }
 
+async function excluirObra(id, nome) {
+  // Verificação de segurança: checa lançamentos e planilhas ativas
+  const lancsAtivos = App.cache.lancamentos.filter(l=>l.obra_id===id&&l.status==='ativo');
+  const planilhas   = App.cache.planilhas.filter(p=>p.obra_id===id);
+
+  if (lancsAtivos.length > 0) {
+    return App.toast(`Não é possível excluir: a obra possui ${lancsAtivos.length} lançamento(s) ativo(s). Estorne todos antes de excluir.`, 'error');
+  }
+
+  const confirmMsg = planilhas.length > 0
+    ? `Excluir permanentemente a obra "${nome}"?\n\nIsso também excluirá ${planilhas.length} planilha(s) vinculada(s).\n\n⚠ Esta ação não pode ser desfeita.`
+    : `Excluir permanentemente a obra "${nome}"?\n\n⚠ Esta ação não pode ser desfeita.`;
+
+  if (!confirm(confirmMsg)) return;
+
+  App.loading(true);
+  try {
+    // Exclui planilhas vinculadas
+    for (const p of planilhas) {
+      await deleteDoc2('planilhas', p.id);
+    }
+    // Exclui OCs vinculadas
+    const obraOCs = App.cache.ordens_compra.filter(oc=>oc.obra_id===id);
+    for (const oc of obraOCs) {
+      await deleteDoc2('ordens_compra', oc.id);
+    }
+    // Exclui a obra
+    await deleteDoc2('obras', id);
+    App.toast(`Obra "${nome}" excluída.`);
+    App.navigate('obras');
+  } catch(e) { App.toast('Erro: '+e.message, 'error'); }
+  finally { App.loading(false); }
+}
+
 async function estornarUI(lancId, obraId) {
   if(!confirm('Estornar este lançamento?')) return;
   App.loading(true);
@@ -445,40 +480,61 @@ async function renderPlanilhas() {
   const main = document.getElementById('main-content');
   const isAdmin = App.perfil === 'admin';
 
+  // Obras visíveis — encarregado só vê as suas
+  const obrasVisiveis = App.perfil === 'encarregado'
+    ? obras.filter(o => App.obraIds.includes(o.id))
+    : obras;
+
+  const temObras = obrasVisiveis.length > 0;
+
   main.innerHTML = `
   <div class="page">
-    <div class="page-header"><h1 class="page-title"><div class="page-title-icon">📋</div>Planilhas</h1></div>
-    ${obras.map(o=>{
-      const obraPls=planilhas.filter(p=>p.obra_id===o.id);
-      if(obraPls.length===0) return '';
-      return `<div class="section-lbl">${o.nome}</div>
-      ${obraPls.map(p=>{
-        const s=calcSaldoPlanilha(p,lancamentos);
-        const pct=p.saldo_inicial>0?Math.max(0,Math.min(100,(s/p.saldo_inicial)*100)):0;
-        return `<div class="card" style="margin-bottom:10px;${s<0?'border-left:4px solid var(--danger)':''}">
-          <div class="card-body">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start">
-              <div>
-                <div style="font-size:15px;font-weight:700">${p.nome}</div>
-                <div style="font-size:11px;color:var(--text3);margin-top:2px">${o.empresa_contratante||''} · Nº ${o.numero_acao||'—'}</div>
-                ${isAdmin?`<div style="margin-top:8px;display:flex;gap:8px">
-                  <button class="btn-link" onclick="showEditarPlanilha('${p.id}','${o.id}')">editar</button>
-                  <span style="color:var(--border2)">|</span>
-                  <button class="btn-link danger" onclick="excluirPlanilha('${p.id}','${o.id}')">excluir</button>
-                </div>`:''}
-              </div>
-              <div style="text-align:right">
-                <div style="font-size:20px;font-weight:800;font-family:'JetBrains Mono',monospace;color:${s<0?'var(--danger)':'var(--success)'}">${fmt(s)}</div>
-                <div style="font-size:11px;color:var(--text3)">de ${fmt(p.saldo_inicial||0)}</div>
-              </div>
+    <div class="page-header">
+      <h1 class="page-title"><div class="page-title-icon">📋</div>Planilhas</h1>
+    </div>
+
+    ${!temObras ? '<div class="empty-state"><span class="empty-icon">📋</span><p>Nenhuma obra disponível.</p></div>' :
+      obrasVisiveis.map(o => {
+        const obraPls = planilhas.filter(p=>p.obra_id===o.id);
+        return `
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-header">
+            <div>
+              <div class="card-title-lg" style="cursor:pointer" onclick="App.navigate('obra_detail',{id:'${o.id}'})">${o.nome}</div>
+              <div style="font-size:11px;color:var(--text3);margin-top:2px">${o.empresa_contratante||''} · Nº ${o.numero_acao||'—'} · <span class="badge ${o.status}" style="font-size:10px">${o.status}</span></div>
             </div>
-            ${s<0?'<div class="alert danger no-click" style="margin:10px 0 4px"><span>⚠ Saldo negativo</span></div>':''}
-            <div class="progress-wrap" style="margin-top:10px"><div class="progress-fill ${s<0?'danger':pct<25?'low':''}" style="width:${s<0?100:pct}%"></div></div>
-            <div style="font-size:10px;color:var(--text3);margin-top:4px">${pct.toFixed(1)}% disponível</div>
+            ${isAdmin ? `<button class="btn btn-primary btn-sm" onclick="showNovaPlanilha('${o.id}')">+ Planilha</button>` : ''}
+          </div>
+          <div class="card-body">
+            ${obraPls.length === 0
+              ? `<div class="empty" style="padding:12px 0">Nenhuma planilha cadastrada nesta obra${isAdmin?' — clique em "+ Planilha" para adicionar':''}</div>`
+              : obraPls.map(p => {
+                  const s   = calcSaldoPlanilha(p, lancamentos);
+                  const pct = p.saldo_inicial>0 ? Math.max(0,Math.min(100,(s/p.saldo_inicial)*100)) : 0;
+                  return `
+                  <div style="padding:12px 0;border-bottom:1px solid var(--border);${s<0?'border-left:3px solid var(--danger);padding-left:10px':''}">
+                    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+                      <div style="flex:1;min-width:0">
+                        <div style="font-size:14px;font-weight:700;margin-bottom:2px">${p.nome}</div>
+                        ${isAdmin ? `<div style="display:flex;gap:8px;margin-top:4px">
+                          <button class="btn-link" onclick="showEditarPlanilha('${p.id}','${o.id}')">editar</button>
+                          <span style="color:var(--border2)">|</span>
+                          <button class="btn-link danger" onclick="excluirPlanilha('${p.id}','${o.id}')">excluir</button>
+                        </div>` : ''}
+                      </div>
+                      <div style="text-align:right;flex-shrink:0">
+                        <div style="font-size:18px;font-weight:800;font-family:'JetBrains Mono',monospace;color:${s<0?'var(--danger)':'var(--success)'}">${fmt(s)}</div>
+                        <div style="font-size:10px;color:var(--text3)">de ${fmt(p.saldo_inicial||0)}</div>
+                      </div>
+                    </div>
+                    ${s<0 ? '<div style="font-size:11px;color:var(--danger);margin-top:4px">⚠ Saldo negativo</div>' : ''}
+                    <div class="progress-wrap" style="margin-top:8px"><div class="progress-fill ${s<0?'danger':pct<25?'low':''}" style="width:${s<0?100:pct}%"></div></div>
+                    <div style="font-size:10px;color:var(--text3);margin-top:3px">${pct.toFixed(1)}% disponível</div>
+                  </div>`;
+                }).join('')}
           </div>
         </div>`;
-      }).join('')}`;
-    }).join('')}
+      }).join('')}
   </div>`;
 }
 
@@ -498,5 +554,6 @@ window.salvarEdicaoPlanilha = salvarEdicaoPlanilha;
 window.excluirPlanilha      = excluirPlanilha;
 window.encerrarObra         = encerrarObra;
 window.reativarObra         = reativarObra;
+window.excluirObra          = excluirObra;
 window.estornarUI           = estornarUI;
 window.cancelarOC           = cancelarOC;

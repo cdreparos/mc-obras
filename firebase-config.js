@@ -29,5 +29,5 @@ const EMPRESA_ID = "marques-caetano";
 // Crie uma chave, copie e cole abaixo entre as aspas
 // Plano gratuito: 1.500 leituras/dia
 // ============================================================
-window.GEMINI_API_KEY = "AIzaSyCrWSckPmD3vfZTi5Y02AEqBEq4R4Dw2XM";  // ← Cole sua chave aqui
+window.GEMINI_API_KEY = "AIzaSyCU08NVV1ojwfxYtBCY-ysZb04-7uW-1rM";  // ← Cole sua chave aqui
 

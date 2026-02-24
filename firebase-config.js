@@ -24,10 +24,11 @@ const storage = firebase.storage();
 const EMPRESA_ID = "marques-caetano";
 
 // ============================================================
-// CHAVE GEMINI — Leitura automática de OC por IA
-// Obtenha GRATUITAMENTE em: https://aistudio.google.com/app/apikey
-// Crie uma chave, copie e cole abaixo entre as aspas
-// Plano gratuito: 1.500 leituras/dia
+// CHAVE GROK (xAI) — Leitura automática de OC por IA
+// 1. Acesse: https://console.x.ai
+// 2. Crie uma conta e vá em "API Keys"
+// 3. Clique em "Create API Key", copie e cole abaixo
+// Plano gratuito: US$25 de crédito inicial (suficiente para centenas de OCs)
 // ============================================================
-window.GEMINI_API_KEY = "AIzaSyCU08NVV1ojwfxYtBCY-ysZb04-7uW-1rM";  // ← Cole sua chave aqui
+window.GROK_API_KEY = "xai-adROKtbz9GBo0Z2nE24A59GZoDIHDHYekNq8p4xxczxp6tPMnDoOiY4PbVR0kHAVSIBnQSjnUf7m61K7";  // ← Cole sua chave xAI aqui
 

@@ -865,16 +865,19 @@ async function showImportarOC(obraIdPre = '') {
     title: 'Importar Ordem de Compra',
     body: `
       <div id="oc-step1">
-        <div class="upload-area" id="oc-drop" onclick="document.getElementById('oc-file').click()"
+        <div class="upload-area" id="oc-drop" onclick="document.getElementById('oc-file-pdf').click()"
           ondragover="event.preventDefault();this.classList.add('drag')"
           ondragleave="this.classList.remove('drag')"
           ondrop="event.preventDefault();this.classList.remove('drag');processarArquivoOC(event.dataTransfer.files[0])">
-          <div class="upload-icon">📄</div>
-          <div class="upload-text">Arraste o PDF da OC aqui</div>
-          <div class="upload-sub">ou clique para selecionar · Compatível com Ferreira Santos, ENGIX e outros</div>
-          <input type="file" id="oc-file" accept=".pdf,.txt" style="display:none" onchange="processarArquivoOC(this.files[0])">
+          <div class="upload-icon">🔍</div>
+          <div class="upload-text">Enviar PDF da OC</div>
+          <div class="upload-sub">Clique para selecionar o arquivo</div>
+          <input type="file" id="oc-file-pdf" accept=".pdf,image/*" style="display:none" onchange="processarArquivoOC(this.files[0])">
         </div>
-        <div style="margin-top:12px;text-align:center">
+        <div style="margin-top:12px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap">
+          <button class="btn-link" onclick="document.getElementById('oc-file-camera').click()">📷 Tirar foto</button>
+          <input type="file" id="oc-file-camera" accept="image/*" capture="environment" style="display:none" onchange="processarArquivoOC(this.files[0])">
+          <span style="color:var(--border2)">·</span>
           <button class="btn-link" onclick="mostrarFormOCManual('${obraIdPre}')">Preencher manualmente →</button>
         </div>
       </div>

@@ -719,45 +719,100 @@ async function pagarDiasPresenca(funcId, dias, valorDia) {
 function parsearOC(texto) {
   const r = {};
 
-  // Nº da OC: "Nº:\n12257" ou "Nº: 12257"
-  const mNum = texto.match(/N[º°o][\s:\n\r]+(\d{4,6})/i);
+  // ── Normaliza o texto ──────────────────────────────────────
+  // Remove espaços múltiplos dentro das linhas mas preserva quebras
+  const linhas = texto.split(/\r?\n/).map(l => l.replace(/\s{2,}/g,' ').trim()).filter(l=>l.length>0);
+  const txt = linhas.join('\n');
+
+  // ── 1. NÚMERO DA OC ───────────────────────────────────────
+  // Padrão ENGIX: "Nº:" seguido de número (mesma linha ou próxima)
+  // Padrão FS:    "N.Pedido:" ou "PEDIDO Nº"
+  const mNum =
+    txt.match(/N[º°o][\s:\.]+(\d{4,6})\b/) ||           // Nº: 17823
+    txt.match(/N\.?\s*Pedido[\s:]+(\d{4,6})/i) ||        // N.Pedido: 12257
+    txt.match(/PEDIDO\s+N[º°o][\s:]+(\d{4,6})/i) ||      // PEDIDO Nº 12257
+    txt.match(/OC[\s:Nº°]+(\d{4,6})/i);                  // OC 17823
   if (mNum) r.numero_oc = mNum[1].trim();
 
-  // Nº Obra / Ação: "Nº Obra\n1671" ou linha com número após "Nº Obra"
-  const mAcao = texto.match(/N[º°o]\s*Obra[\s\n\r]+(\d{3,6})/i)
-    || texto.match(/A[çc][aã]o:?\s*(\d{3,6})/i)
-    || texto.match(/A[ÇC][ÃA]O[\s:,]+(\d{3,6})/i);
+  // ── 2. NÚMERO DA OBRA / AÇÃO ──────────────────────────────
+  // ENGIX: célula "Nº Obra" seguida de número na próxima linha/célula
+  // FS: "Nº Ação" ou "Ação:"
+  // Estratégia: encontrar "Nº Obra" ou "Nº Ação" e pegar o número LOGO APÓS
+  const mAcao =
+    txt.match(/N[º°o]\s*Obra[\s\n:]+(\d{3,6})\b/) ||       // Nº Obra\n1684
+    txt.match(/N[º°o]\s*A[çc][ãa]o[\s\n:]+(\d{3,6})\b/) || // Nº Ação: 1671
+    txt.match(/A[çc][ãa]o[\s:]+(\d{3,6})\b/i);              // Ação: 1671
   if (mAcao) r.numero_acao = mAcao[1].trim();
 
-  // Fornecedor: linha após "Fornec.:" ou "Fornecedor:"
-  const mForn = texto.match(/Fornec[.\s:]+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^\n\r]{3,60})/i)
-    || texto.match(/Fornecedor[\s:]+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^\n\r]{3,60})/i);
-  if (mForn) r.fornecedor = mForn[1].trim().replace(/\s+/g,' ');
-
-  // CNPJ Fornecedor — pegar o último CNPJ encontrado (fornecedor, não empresa)
-  const todosCNPJ = [...texto.matchAll(/(\d{2}[\.\s]?\d{3}[\.\s]?\d{3}[\/\s]?\d{4}[-\s]?\d{2})/g)].map(m=>m[1]);
-  if (todosCNPJ.length > 0) r.cnpj_fornecedor = todosCNPJ[todosCNPJ.length-1];
-
-  // Data: campo "DATA" seguido de data
-  const mData = texto.match(/\bDATA\b[\s\n\r]+([\d]{2}\/[\d]{2}\/[\d]{4})/i)
-    || texto.match(/Entrega[\s:]+([\d]{2}\/[\d]{2}\/[\d]{4})/i)
-    || texto.match(/([\d]{2}\/[\d]{2}\/[\d]{4})/);
-  if (mData) {
-    const partes = mData[1].split('/');
-    if (partes.length===3) r.data_emissao = `${partes[2]}-${partes[1]}-${partes[0]}`;
+  // ── 3. FORNECEDOR ─────────────────────────────────────────
+  // ENGIX: "Fornec.:" na seção "DADOS DO FORNECEDOR"
+  // FS:    "Fornecedor:" ou "Fornec.:"
+  // Captura tudo até o fim da linha, descartando CNPJ/CPF na mesma linha
+  const mForn =
+    txt.match(/Fornec\.?[\s:]+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^\n]{3,60})/) ||
+    txt.match(/Fornecedor[\s:]+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^\n]{3,60})/i);
+  if (mForn) {
+    // Remove CNPJ/CPF caso apareça na mesma linha após o nome
+    r.fornecedor = mForn[1]
+      .replace(/CNPJ[^\n]*/i,'')
+      .replace(/CPF[^\n]*/i,'')
+      .trim()
+      .replace(/\s+/g,' ');
   }
 
-  // Valor Total: "Total:\n615,20" ou "Total: 615,20"
-  const mTotal = texto.match(/\bTotal[\s:]*\n\s*([\d\.]+,\d{2})/i)
-    || texto.match(/\bTotal[\s:]*R?\$?\s*([\d\.]+,\d{2})/i);
-  if (mTotal) r.valor_total = parseFloat(mTotal[1].replace(/\./g,'').replace(',','.'));
+  // ── 4. CNPJ DO FORNECEDOR ────────────────────────────────
+  // Estratégia: pegar TODOS os CNPJs do PDF, ignorar o da EMPRESA (aparece antes)
+  // O CNPJ do fornecedor vem DEPOIS da linha "DADOS DO FORNECEDOR" ou "Fornec.:"
+  const idxFornecedor = txt.search(/DADOS DO FORNECEDOR|Fornec\./i);
+  const txtAposFornec = idxFornecedor >= 0 ? txt.substring(idxFornecedor) : txt;
+  const regexCNPJ = /(\d{2}[\.\s]?\d{3}[\.\s]?\d{3}[\/\s]?\d{4}[-\s]?\d{2})/g;
 
-  // Nome da obra: campo "Obra" → linha longa de descrição
-  const mObra = texto.match(/\bObra\b[\s\n\r]+(\d{1,6})\s*\n([^\n\r]{10,100})/i);
-  if (mObra) r.nome_obra = mObra[2].trim();
+  // Preferência: CNPJ/CPF na mesma linha do fornecedor
+  const mCnpjLinha = txtAposFornec.match(/CNPJ\/CPF[\s:]+(\d{2}[\.\s]?\d{3}[\.\s]?\d{3}[\/\s]?\d{4}[-\s]?\d{2})/i);
+  if (mCnpjLinha) {
+    r.cnpj_fornecedor = mCnpjLinha[1].trim();
+  } else {
+    // Fallback: último CNPJ de todo o documento
+    const todos = [...txt.matchAll(regexCNPJ)].map(m=>m[1]);
+    if (todos.length > 0) r.cnpj_fornecedor = todos[todos.length-1];
+  }
+
+  // ── 5. DATA ───────────────────────────────────────────────
+  // ENGIX: coluna "DATA" com valor dd/mm/aaaa na mesma linha ou próxima
+  // FS:    "Data:" ou data isolada
+  // Busca a data que aparece APÓS a palavra DATA
+  const mData =
+    txt.match(/\bDATA\b[\s:]+(\d{2}\/\d{2}\/\d{4})/) ||  // DATA 05/02/2026
+    txt.match(/\bData[\s:]+(\d{2}\/\d{2}\/\d{4})/i) ||   // Data: 05/02/2026
+    txt.match(/Emiss[ãa]o[\s:]+(\d{2}\/\d{2}\/\d{4})/i)||// Emissão: 05/02/2026
+    txt.match(/(\d{2}\/\d{2}\/\d{4})/);                   // qualquer data
+  if (mData) {
+    const [dd,mm,aaaa] = mData[1].split('/');
+    r.data_emissao = `${aaaa}-${mm}-${dd}`;
+  }
+
+  // ── 6. VALOR TOTAL ────────────────────────────────────────
+  // ENGIX/FS: linha "Total:" ou "Total" seguida de valor
+  // O valor pode ter ponto como separador de milhar: 1.147,00
+  const mTotal =
+    txt.match(/\bTotal[\s:]*\n[\s]*([\d\.]+,\d{2})/) ||   // Total:\n1.147,00
+    txt.match(/\bTotal[\s:]+([\d\.]+,\d{2})/) ||           // Total: 1.147,00
+    txt.match(/\bTOTAL[\s:]+([\d\.]+,\d{2})/);             // TOTAL 1.147,00
+  if (mTotal) {
+    r.valor_total = parseFloat(mTotal[1].replace(/\./g,'').replace(',','.'));
+  }
+
+  // ── Nome/desc da obra (bônus) ─────────────────────────────
+  // ENGIX: linha longa após o número da obra na célula "Obra"
+  // Ex: "1684 UMEF CORONEL JOAQUIM DE FREITAS..."
+  if (r.numero_acao) {
+    const mNomeObra = txt.match(new RegExp(r.numero_acao + '[\\s]+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^\\n]{10,120})'));
+    if (mNomeObra) r.nome_obra = mNomeObra[1].trim();
+  }
 
   return r;
 }
+
 
 async function renderOC() {
   const { ordens_compra, obras, planilhas } = await loadAll();
@@ -867,32 +922,85 @@ async function processarArquivoOC(file) {
   reader.onload = async (e) => {
     try {
       const bytes = new Uint8Array(e.target.result);
-      const raw = new TextDecoder('latin1').decode(bytes);
+      const raw   = new TextDecoder('latin1').decode(bytes);
 
-      // Método 1: Extrair strings de texto do PDF (BT...ET)
-      const streams = [];
+      // ── Método 1: extração de strings PDF (BT...ET blocks) ──
+      // Agrupa strings por posição Y para reconstruir linhas corretamente
+      const blocos = [];
       const btRe = /BT([\s\S]*?)ET/g;
       let m;
       while ((m = btRe.exec(raw)) !== null) {
         const bloco = m[1];
-        const strRe = /\(([^)]*)\)/g;
-        let sm;
-        while ((sm = strRe.exec(bloco)) !== null) {
-          const s = sm[1]
-            .replace(/\\n/g,'\n').replace(/\\r/g,'')
-            .replace(/\\\(/g,'(').replace(/\\\)/g,')');
-          if (s.trim()) streams.push(s.trim());
+        // Captura posição Td/Tm e texto Tj/TJ
+        const posRe = /(?:(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+Td|Tm)([\s\S]*?)(?=\d+\s+\d+\s+T[dm]|$)/g;
+        let pm;
+        while ((pm = posRe.exec(bloco)) !== null) {
+          const trecho = pm[3] || bloco;
+          const strRe2 = /\(([^)]*(?:\.[^)]*)*)\)\s*T[jJ]/g;
+          let sm;
+          while ((sm = strRe2.exec(trecho)) !== null) {
+            const s = sm[1]
+              .replace(/\n/g, '
+').replace(/\r/g, '')
+              .replace(/\\(/g, '(').replace(/\\)/g, ')')
+              .replace(/\'/g, "'");
+            if (s.trim().length > 0) blocos.push(s.trim());
+          }
+        }
+        // Fallback: pega todas strings do bloco mesmo sem posição
+        if (blocos.length === 0) {
+          const strRe3 = /\(([^)]*(?:\.[^)]*)*)\)/g;
+          let sm2;
+          while((sm2 = strRe3.exec(bloco)) !== null) {
+            const s = sm2[1].replace(/\n/g,'
+').replace(/\\(/g,'(').replace(/\\)/g,')');
+            if (s.trim().length > 1) blocos.push(s.trim());
+          }
         }
       }
-      let texto = streams.join('\n');
+      let texto = blocos.join('
+');
 
-      // Método 2: fallback texto simples
-      if (texto.length < 50) {
-        texto = raw.replace(/[^\x20-\x7E\xC0-\xFF\n\r\t]/g,' ');
+      // ── Método 2: stream descomprimido (PDFs simples) ──────
+      if (texto.replace(/\s/g,'').length < 80) {
+        // Tenta extrair texto de stream não comprimido
+        const streamRe = /stream
+?
+([\s\S]*?)
+?
+endstream/g;
+        const partes = [];
+        let sm;
+        while ((sm = streamRe.exec(raw)) !== null) {
+          const parte = sm[1].replace(/[^ -~À-ÿ
+
+	]/g,' ');
+          if (parte.trim().length > 10) partes.push(parte);
+        }
+        texto = partes.join('
+');
       }
+
+      // ── Método 3: fallback texto bruto ─────────────────────
+      if (texto.replace(/\s/g,'').length < 80) {
+        texto = raw.replace(/[^ -~À-ÿ
+
+	]/g,' ');
+      }
+
+      // Limpa e normaliza para o parser
+      texto = texto
+        .split(/
+?
+/)
+        .map(l => l.trim())
+        .filter(l => l.length > 0)
+        .join('
+');
 
       await exibirPreviewOC(texto, file.name);
     } catch(err) {
+      console.error('Erro lendo PDF:', err);
       mostrarFormOCManual('');
       App.toast('Não foi possível ler o PDF automaticamente. Preencha manualmente.','warning');
     }

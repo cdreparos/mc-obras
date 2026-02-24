@@ -916,7 +916,7 @@ async function showImportarOC(obraIdPre = '') {
 
 async function processarArquivoOC(file) {
   if (!file) return;
-  document.getElementById('oc-drop').innerHTML = `<div class="upload-icon">⏳</div><div class="upload-text">Lendo PDF...</div>`;
+  document.getElementById('oc-drop').innerHTML = '<div class="upload-icon">&#9203;</div><div class="upload-text">Lendo PDF...</div>';
 
   const reader = new FileReader();
   reader.onload = async (e) => {
@@ -924,85 +924,57 @@ async function processarArquivoOC(file) {
       const bytes = new Uint8Array(e.target.result);
       const raw   = new TextDecoder('latin1').decode(bytes);
 
-      // ── Método 1: extração de strings PDF (BT...ET blocks) ──
-      // Agrupa strings por posição Y para reconstruir linhas corretamente
+      // Extrai strings dos blocos BT...ET do PDF
       const blocos = [];
       const btRe = /BT([\s\S]*?)ET/g;
       let m;
       while ((m = btRe.exec(raw)) !== null) {
         const bloco = m[1];
-        // Captura posição Td/Tm e texto Tj/TJ
-        const posRe = /(?:(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+Td|Tm)([\s\S]*?)(?=\d+\s+\d+\s+T[dm]|$)/g;
-        let pm;
-        while ((pm = posRe.exec(bloco)) !== null) {
-          const trecho = pm[3] || bloco;
-          const strRe2 = /\(([^)]*(?:\.[^)]*)*)\)\s*T[jJ]/g;
-          let sm;
-          while ((sm = strRe2.exec(trecho)) !== null) {
-            const s = sm[1]
-              .replace(/\n/g, '
-').replace(/\r/g, '')
-              .replace(/\\(/g, '(').replace(/\\)/g, ')')
-              .replace(/\'/g, "'");
-            if (s.trim().length > 0) blocos.push(s.trim());
-          }
+        // Captura strings entre parênteses seguidas de Tj ou TJ
+        const strRe = /\(([^)(]*(?:\\.[^)(]*)*)\)\s*(?:Tj|TJ|'|")/g;
+        let sm;
+        while ((sm = strRe.exec(bloco)) !== null) {
+          let s = sm[1];
+          // Decodifica escapes comuns do PDF
+          s = s.replace(/\\n/g, ' ').replace(/\\r/g, '').replace(/\\t/g, ' ');
+          s = s.replace(/\\\\/g, '\\').replace(/\\\(/g, '(').replace(/\\\)/g, ')');
+          if (s.trim().length > 1) blocos.push(s.trim());
         }
-        // Fallback: pega todas strings do bloco mesmo sem posição
+        // Fallback: qualquer string entre parênteses no bloco
         if (blocos.length === 0) {
-          const strRe3 = /\(([^)]*(?:\.[^)]*)*)\)/g;
+          const strRe2 = /\(([^)(]{2,})\)/g;
           let sm2;
-          while((sm2 = strRe3.exec(bloco)) !== null) {
-            const s = sm2[1].replace(/\n/g,'
-').replace(/\\(/g,'(').replace(/\\)/g,')');
+          while ((sm2 = strRe2.exec(bloco)) !== null) {
+            const s = sm2[1].replace(/\\n/g,' ').replace(/\\\(/g,'(').replace(/\\\)/g,')');
             if (s.trim().length > 1) blocos.push(s.trim());
           }
         }
       }
-      let texto = blocos.join('
-');
+      let texto = blocos.join('\n');
 
-      // ── Método 2: stream descomprimido (PDFs simples) ──────
+      // Fallback para PDFs com texto em stream direto
       if (texto.replace(/\s/g,'').length < 80) {
-        // Tenta extrair texto de stream não comprimido
-        const streamRe = /stream
-?
-([\s\S]*?)
-?
-endstream/g;
-        const partes = [];
-        let sm;
-        while ((sm = streamRe.exec(raw)) !== null) {
-          const parte = sm[1].replace(/[^ -~À-ÿ
-
-	]/g,' ');
-          if (parte.trim().length > 10) partes.push(parte);
-        }
-        texto = partes.join('
-');
+        const linhas = [];
+        raw.replace(/\(([^)(]{3,})\)/g, function(_, s) {
+          const limpo = s.replace(/[^\x20-\x7E\xC0-\xFF]/g,' ').trim();
+          if (limpo.length > 2) linhas.push(limpo);
+        });
+        texto = linhas.join('\n');
       }
 
-      // ── Método 3: fallback texto bruto ─────────────────────
+      // Fallback final: texto bruto legível
       if (texto.replace(/\s/g,'').length < 80) {
-        texto = raw.replace(/[^ -~À-ÿ
-
-	]/g,' ');
+        texto = raw.split('\n')
+          .map(l => l.replace(/[^\x20-\x7E\xC0-\xFF]/g,' ').trim())
+          .filter(l => l.length > 3)
+          .join('\n');
       }
-
-      // Limpa e normaliza para o parser
-      texto = texto
-        .split(/
-?
-/)
-        .map(l => l.trim())
-        .filter(l => l.length > 0)
-        .join('
-');
 
       await exibirPreviewOC(texto, file.name);
     } catch(err) {
       console.error('Erro lendo PDF:', err);
       mostrarFormOCManual('');
-      App.toast('Não foi possível ler o PDF automaticamente. Preencha manualmente.','warning');
+      App.toast('Nao foi possivel ler o PDF automaticamente. Preencha manualmente.', 'warning');
     }
   };
   reader.readAsArrayBuffer(file);

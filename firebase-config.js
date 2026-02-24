@@ -20,9 +20,10 @@ const storage = firebase.storage();
 const EMPRESA_ID = "marques-caetano";
 
 // ============================================================
-// CHAVE MISTRAL AI — Leitura automática de OC por IA
-// 1. Acesse https://console.mistral.ai e crie conta (sem cartão)
-// 2. Vá em "API Keys" → "Create new key"
-// 3. Cole a chave abaixo entre as aspas
+// CHAVE OCR.space — Leitura automática de OC (GRATUITO)
+// 1. A chave "helloworld" já está configurada para testes
+// 2. Para produção: cadastre em https://ocr.space/ocrapi (gratuito)
+//    e substitua "helloworld" pela sua chave pessoal
+// Limite gratuito: 500 req/dia, 25.000/mês — mais que suficiente
 // ============================================================
-window.MISTRAL_API_KEY = "77zXtTFrsX7xqv1Zs74mftMKBoSmU0D9";  // ← Cole sua chave aqui
+window.OCRSPACE_API_KEY = "helloworld";  // substitua pela sua chave pessoal se necessário

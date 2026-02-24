@@ -895,107 +895,113 @@ async function processarArquivoOC(file) {
   if (!file) return;
 
   const dropEl = document.getElementById('oc-drop');
-  dropEl.innerHTML = '<div class="upload-icon">🤖</div><div class="upload-text">Lendo com IA...</div><div class="upload-sub">Isso pode levar alguns segundos</div>';
+  if (!dropEl) return;
+  dropEl.innerHTML = '<div class="upload-icon">🤖</div><div class="upload-text">Lendo com IA...</div><div class="upload-sub">Aguarde alguns segundos</div>';
 
   try {
-    // Converte o arquivo para base64
-    const base64 = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload  = e => resolve(e.target.result.split(',')[1]);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-
-    const isPDF  = file.type === 'application/pdf' || file.name.endsWith('.pdf');
-    const isImg  = file.type.startsWith('image/');
+    const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    const isImg = file.type.startsWith('image/');
     if (!isPDF && !isImg) {
-      App.toast('Formato não suportado. Use PDF ou imagem (JPG, PNG).', 'error');
+      App.toast('Use PDF ou imagem (JPG, PNG).', 'error');
+      dropEl.innerHTML = '<div class="upload-icon">🤖</div><div class="upload-text">Enviar PDF ou foto da OC</div><div class="upload-sub">Leitura automática por IA · PDF, JPG ou PNG</div>';
       return;
     }
 
-    const mediaType = isPDF ? 'application/pdf' : file.type;
-
-    // Chama a API do Claude para ler o documento
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1024,
-        messages: [{
-          role: 'user',
-          content: [
-            {
-              type: isPDF ? 'document' : 'image',
-              source: { type: 'base64', media_type: mediaType, data: base64 }
-            },
-            {
-              type: 'text',
-              text: `Você é um extrator de dados de Ordem de Compra (OC) da construtora ENGIX.
-Extraia EXATAMENTE estes 6 campos do documento e responda APENAS com JSON válido, sem texto antes ou depois:
-
-{
-  "numero_oc": "número da OC (campo Nº no canto superior direito)",
-  "numero_acao": "número da obra/ação (coluna Nº Obra)",
-  "fornecedor": "nome do fornecedor (campo Fornec.)",
-  "cnpj_fornecedor": "CNPJ do fornecedor (campo CNPJ/CPF ao lado do fornecedor)",
-  "data_emissao": "data no formato YYYY-MM-DD (coluna DATA da tabela de obra)",
-  "valor_total": 0.00
-}
-
-Regras:
-- numero_oc e numero_acao são apenas números (ex: "17823", "1684")
-- data_emissao deve ser convertida de DD/MM/AAAA para AAAA-MM-DD
-- valor_total deve ser número decimal sem formatação (ex: 1147.00)
-- Se não encontrar um campo, use null`
-            }
-          ]
-        }]
-      })
+    // Lê o arquivo como base64
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload  = e => resolve(e.target.result.split(',')[1]);
+      reader.onerror = () => reject(new Error('Erro ao ler arquivo'));
+      reader.readAsDataURL(file);
     });
 
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      throw new Error(err.error?.message || `HTTP ${response.status}`);
+    // ── Chave da API Gemini ──────────────────────────────────
+    // Obtenha gratuitamente em: https://aistudio.google.com/app/apikey
+    const GEMINI_KEY = window.GEMINI_API_KEY || '';
+    if (!GEMINI_KEY) {
+      App.toast('Chave Gemini não configurada. Preencha manualmente ou configure a chave.', 'warning');
+      setTimeout(() => mostrarFormOCManual(''), 800);
+      return;
     }
 
-    const data  = await response.json();
-    const texto = data.content?.find(b => b.type === 'text')?.text || '';
+    // Prompt estruturado para extração de OC
+    const prompt = `Você é um sistema de extração de dados de Ordem de Compra (OC) brasileira.
+Analise o documento e extraia EXATAMENTE estes campos. Responda APENAS com JSON puro, sem markdown, sem explicações.
 
-    // Parse do JSON retornado pelo Claude
-    let dados = {};
-    try {
-      const jsonMatch = texto.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error('JSON não encontrado na resposta');
-      const raw = JSON.parse(jsonMatch[0]);
+Campos a extrair:
+- numero_oc: número da OC (campo "Nº:" no canto superior direito, ex: "17823")
+- numero_acao: número da obra/ação (coluna "Nº Obra", ex: "1684")
+- fornecedor: nome completo do fornecedor (campo "Fornec.:", ex: "LEO MAQUINAS LTDA")
+- cnpj_fornecedor: CNPJ do fornecedor (campo "CNPJ/CPF:" ao lado do fornecedor, ex: "04.731.355/0001-01")
+- data_emissao: data em formato YYYY-MM-DD (coluna "DATA", converter de DD/MM/AAAA)
+- valor_total: valor total como número decimal (linha "Total:", ex: 1147.00)
 
-      // Normaliza os campos
-      dados = {
-        numero_oc:      String(raw.numero_oc  || '').trim(),
-        numero_acao:    String(raw.numero_acao || '').trim(),
-        fornecedor:     String(raw.fornecedor  || '').trim(),
-        cnpj_fornecedor:String(raw.cnpj_fornecedor || '').trim(),
-        data_emissao:   String(raw.data_emissao || '').trim(),
-        valor_total:    parseFloat(String(raw.valor_total || '0').replace(',','.')) || 0,
-      };
-    } catch (parseErr) {
-      console.error('Erro parseando JSON do Claude:', parseErr, texto);
-      throw new Error('Resposta inesperada da IA. Tente novamente ou preencha manualmente.');
+Responda exatamente neste formato JSON:
+{"numero_oc":"","numero_acao":"","fornecedor":"","cnpj_fornecedor":"","data_emissao":"","valor_total":0}`;
+
+    // Monta o request para Gemini
+    const mimeType = isPDF ? 'application/pdf' : file.type;
+    const geminiBody = {
+      contents: [{
+        parts: [
+          { text: prompt },
+          { inline_data: { mime_type: mimeType, data: base64 } }
+        ]
+      }],
+      generationConfig: {
+        temperature: 0,
+        maxOutputTokens: 512,
+      }
+    };
+
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(geminiBody)
+      }
+    );
+
+    if (!resp.ok) {
+      const errData = await resp.json().catch(() => ({}));
+      const msg = errData?.error?.message || `Erro HTTP ${resp.status}`;
+      throw new Error(msg);
+    }
+
+    const respData = await resp.json();
+    const textoIA  = respData?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+    if (!textoIA) throw new Error('Resposta vazia da IA');
+
+    // Parse do JSON retornado
+    const jsonMatch = textoIA.match(/\{[\s\S]*?\}/);
+    if (!jsonMatch) throw new Error('IA não retornou JSON válido: ' + textoIA.substring(0, 100));
+
+    const raw = JSON.parse(jsonMatch[0]);
+    const dados = {
+      numero_oc:       String(raw.numero_oc       || '').trim(),
+      numero_acao:     String(raw.numero_acao      || '').trim(),
+      fornecedor:      String(raw.fornecedor       || '').trim(),
+      cnpj_fornecedor: String(raw.cnpj_fornecedor  || '').trim(),
+      data_emissao:    String(raw.data_emissao     || '').trim(),
+      valor_total:     parseFloat(String(raw.valor_total || '0').replace(',', '.')) || 0,
+    };
+
+    // Verifica se extraiu pelo menos o número da OC
+    if (!dados.numero_oc && !dados.fornecedor) {
+      throw new Error('IA não conseguiu extrair dados. Verifique se o arquivo é legível.');
     }
 
     await exibirPreviewOC(dados, file.name, true);
 
   } catch(err) {
-    console.error('Erro OCR:', err);
-    dropEl.innerHTML = '<div class="upload-icon">📄</div><div class="upload-text">Arraste o PDF da OC aqui</div><div class="upload-sub">ou clique para selecionar</div>';
-
-    // Se o erro for de autenticação (sem chave API), avisa o usuário
-    if (err.message && err.message.includes('401')) {
-      App.toast('API do Claude não configurada. Use o formulário manual.', 'warning');
-    } else {
-      App.toast('Erro ao processar: ' + err.message + '. Preencha manualmente.', 'warning');
+    console.error('Erro OCR Gemini:', err);
+    if (dropEl) {
+      dropEl.innerHTML = '<div class="upload-icon">🤖</div><div class="upload-text">Enviar PDF ou foto da OC</div><div class="upload-sub">Leitura automática por IA · PDF, JPG ou PNG</div>';
     }
-    setTimeout(() => mostrarFormOCManual(''), 1500);
+    App.toast('Erro na leitura: ' + err.message, 'error');
+    setTimeout(() => mostrarFormOCManual(''), 2000);
   }
 }
 

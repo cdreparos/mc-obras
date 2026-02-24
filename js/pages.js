@@ -753,14 +753,13 @@ function parsearOC(texto) {
     }
   }
 
-  // 4. CNPJ — busca APÓS seção do fornecedor, tolerante a variações OCR
+  // 4. CNPJ — busca o padrão XX.XXX.XXX/XXXX-XX após a seção do fornecedor
+  // Ignora o CNPJ da empresa (03.422.281/0001-69) que aparece antes de "Fornec.:"
   const idxF = txt.toLowerCase().indexOf('fornec');
   const txtF = idxF >= 0 ? txt.substring(idxF) : txt;
-  const cnpjPats = [
-    /CNPJ[\/I\s]*CPF[\s:]*([\d]{2}[\.\s]?[\d]{3}[\.\s]?[\d]{3}[\s\/]?[\d]{4}[\s\-]?[\d]{2})/i,
-    /CNPJ[\s:]*([\d]{2}[\.\s]?[\d]{3}[\.\s]?[\d]{3}[\s\/]?[\d]{4}[\s\-]?[\d]{2})/i,
-  ];
-  for (const p of cnpjPats) { m = txtF.match(p); if (m) { r.cnpj_fornecedor = m[1].trim(); break; } }
+  // Captura diretamente pelo formato numérico — tolerante a variações OCR
+  const mCnpj = txtF.match(/(\d{2}[.\s]\d{3}[.\s]\d{3}[\/\s]\d{4}[\s-]{1,2}\d{2})/);
+  if (mCnpj) r.cnpj_fornecedor = mCnpj[1].trim();
 
   // 5. Data fallback
   if (!r.data_emissao) {

@@ -571,7 +571,6 @@ async function renderPresenca() {
       </div>
     </div>
 
-    <!-- Resumo semana -->
     <div class="stats-grid" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:16px">
       <div class="stat-card">
         <div class="stat-card-inner"><div><div class="stat-label">Presenças</div><div class="stat-value green">${totalPresentes}</div></div><div class="stat-icon green">✓</div></div>
@@ -587,7 +586,6 @@ async function renderPresenca() {
       </div>
     </div>
 
-    <!-- Legenda rápida -->
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
       ${Object.entries(statusCfg).map(([k,v])=>`
         <span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;background:var(--surface2);border:1px solid var(--border)">
@@ -596,7 +594,6 @@ async function renderPresenca() {
       <span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;background:var(--surface2);border:1px solid var(--border)">— Não registrado</span>
     </div>
 
-    <!-- Cards por funcionário (mobile-first) -->
     ${ativos.length===0 ? '<div class="empty-state"><span class="empty-icon">👷</span><p>Nenhum funcionário ativo.</p></div>' :
       ativos.map(f => {
         const diasP = diasSemana.filter(d=>getStatus(f.id,d)==='presente').length;
@@ -621,7 +618,6 @@ async function renderPresenca() {
             </button>`:''}
           </div>
           <div class="card-body" style="padding:8px 14px 12px">
-            <!-- Grid de dias: 7 colunas -->
             <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px">
               ${diasSemana.map(d => {
                 const dt  = new Date(d+'T12:00:00');
@@ -715,87 +711,97 @@ async function pagarDiasPresenca(funcId, dias, valorDia) {
 
 
 // ── ORDENS DE COMPRA ──────────────────────────────────────────
-// Parser baseado nos modelos reais Ferreira Santos / ENGIX
+// Parser atualizado para funcionar com layout do Fornecedor na frente do "Fornec.:" 
+// e lidar com sujeiras/aspas nos blocos Tj de extração do PDF.
 function parsearOC(texto) {
   const r = {};
 
-  // Palavras que nunca são nome de fornecedor (cabeçalho da ENGIX)
-  const EXCLUIR_FORN = new Set([
-    'DEPARTAMENTO','SISTEMA','ENGIX','ORDEM','COMPRADOR','COMPRAS',
-    'QUALIDADE','GESTÃO','GESTAO','EMPRESA:'
-  ]);
+  // Limpar aspas que o conversor de blocos PDF injeta (ex: "Total:","1.147,00"), facilitando a busca
+  const txtLimpo = texto.replace(/"/g, ' ');
 
   // ── 1. Nº OC ─────────────────────────────────────────────────
-  // Padrão OpenLine: "Nº: 17823" no cabeçalho
-  // Fallback:        "NR DA OC: 17823" no rodapé de observação
-  let m = texto.match(/N[º°o]:\s*(\d{4,6})/);
-  if (!m) m = texto.match(/NR DA OC:\s*(\d{4,6})/i);
+  let m = txtLimpo.match(/N[º°oO]?\s*:\s*(\d{4,8})/i);
+  if (!m) m = txtLimpo.match(/NR DA OC:\s*(\d{4,8})/i);
   if (m) r.numero_oc = m[1];
 
-  // ── 2. Nº Obra + Nome da Obra + Data ─────────────────────────
-  // Layout OpenLine: "1684  UMEF CORONEL JOAQUIM...  05/02/2026"
-  // Tudo na mesma linha — número, nome longo, data no fim
-  m = texto.match(/^(\d{3,6})\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^\n]{15,}?)\s+(\d{2}\/\d{2}\/\d{4})\s*$/m);
-  if (m) {
-    r.numero_acao  = m[1];
-    r.nome_obra    = m[2].trim();
-    const [dd,mm,aaaa] = m[3].split('/');
-    r.data_emissao = `${aaaa}-${mm}-${dd}`;
-  }
-
-  // ── 3. Fornecedor ─────────────────────────────────────────────
-  // Layout OpenLine: o nome do fornecedor vem ANTES do label "Fornec.:"
-  // Separado do label por linhas de endereço (AV, RUA, cidade, bairro)
-  const idxFornec = texto.indexOf('Fornec.:');
-  if (idxFornec > 0) {
-    const blocoAntes = texto.substring(0, idxFornec).trim().split('\n');
-    const ignorarPrefixo = ['End:','Cidade:','Bairro:','UF:','CEP:','Vendedor:','Tel.:','DADOS'];
-    const ignorarRegex   = /^(AV\b|RUA\b|R\.\s|ROD\b|ESTRADA\b)/i;
-
-    for (let i = blocoAntes.length - 1; i >= 0; i--) {
-      const linha = blocoAntes[i].trim();
-      if (!linha) continue;
-      // Para na seção anterior (Nº Obra)
-      if (/Nº Obra|Obra\s+DATA/.test(linha)) break;
-      // Ignora rótulos de endereço
-      if (ignorarPrefixo.some(p => linha.startsWith(p))) continue;
-      if (ignorarRegex.test(linha)) continue;
-      if (/UF:\s*[A-Z]{2}|CEP:|Bairro:/.test(linha)) continue;
-      // Ignora palavras do cabeçalho ENGIX
-      const palavras = linha.split(/\s+/);
-      if (palavras.some(p => EXCLUIR_FORN.has(p))) continue;
-      // Linha válida com aparência de nome de empresa
-      if (linha.length > 4 && /[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{3}/.test(linha)) {
-        r.fornecedor = linha;
-        break;
-      }
+  // ── 2. Nº Ação (Obra) ────────────────────────────────────────
+  m = txtLimpo.match(/A[ÇC][ÃA]O\s*:\s*(\d{3,8})/i);
+  if (!m) {
+    // Fallback: Procura na mesma linha do "Nº Obra" ou logo após (padrão antigo)
+    m = txtLimpo.match(/^(\d{3,6})\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^\n]{15,}?)\s+(\d{2}\/\d{2}\/\d{4})\s*$/m);
+    if (m) {
+      r.numero_acao  = m[1];
+      r.nome_obra    = m[2].trim();
+      const [dd,mm,aaaa] = m[3].split('/');
+      r.data_emissao = `${aaaa}-${mm}-${dd}`;
+    } else {
+      // Tenta pegar o primeiro numero isolado após "Nº Obra"
+      let objM = txtLimpo.match(/N[º°o]?\s*Obra[\s\S]{0,30}?\b(\d{3,6})\b/i);
+      if (objM) r.numero_acao = objM[1];
     }
+  } else {
+    r.numero_acao = m[1];
   }
 
-  // ── 4. CNPJ Fornecedor ────────────────────────────────────────
-  // OpenLine: "CNPJ/CPF: 04.731.355/0001-01" na linha do fornecedor
-  m = texto.match(/CNPJ\/CPF:\s*(\d{2}[\.\s]?\d{3}[\.\s]?\d{3}[\/\s]?\d{4}[-\s]?\d{2})/);
-  if (m) r.cnpj_fornecedor = m[1].trim();
-
-  // ── 5. Data (fallback) ────────────────────────────────────────
-  // Já capturada junto com nº obra acima
-  // Fallback: campo "Entrega:" no rodapé
+  // ── 3. Data Emissão ──────────────────────────────────────────
   if (!r.data_emissao) {
-    m = texto.match(/Entrega:\s*(\d{2}\/\d{2}\/\d{4})/);
+    m = txtLimpo.match(/(?:DATA|Entrega\s*:?)[^0-9]*(\d{2}\/\d{2}\/\d{4})/i);
+    if (!m) m = txtLimpo.match(/(\d{2}\/\d{2}\/\d{4})/); // Qualquer data como último recurso
     if (m) {
       const [dd,mm,aaaa] = m[1].split('/');
       r.data_emissao = `${aaaa}-${mm}-${dd}`;
     }
   }
 
-  // ── 6. Valor Total ────────────────────────────────────────────
-  // OpenLine: "Total: 1.147,00" aparece logo no início do texto extraído
-  m = texto.match(/^Total:\s*([\d\.]+,\d{2})/m);
-  if (m) r.valor_total = parseFloat(m[1].replace(/\./g,'').replace(',','.'));
+  // ── 4. Fornecedor ────────────────────────────────────────────
+  m = txtLimpo.match(/Fornec\.\s*:\s*([^\n]+)/i);
+  if (m && m[1].trim().length > 3) {
+    let f = m[1].trim();
+    // Remove lixo se estiver na mesma linha (ex: "CNPJ" colado na frente)
+    f = f.split(/CNPJ|End:|Bairro:/i)[0].trim();
+    // Remove vírgulas perdidas
+    f = f.replace(/,+$/, '').trim();
+    if (f.length > 2) r.fornecedor = f;
+  }
+
+  // Se não achou na frente, tenta a lógica antiga (Fornecedor posicionado *antes* de "Fornec.:")
+  if (!r.fornecedor) {
+    const EXCLUIR_FORN = new Set(['DEPARTAMENTO','SISTEMA','ENGIX','ORDEM','COMPRADOR','COMPRAS','QUALIDADE','GESTÃO','GESTAO','EMPRESA:']);
+    const idxFornec = txtLimpo.indexOf('Fornec.:');
+    if (idxFornec > 0) {
+      const blocoAntes = txtLimpo.substring(0, idxFornec).trim().split('\n');
+      const ignorarPrefixo = ['End:','Cidade:','Bairro:','UF:','CEP:','Vendedor:','Tel.:','DADOS'];
+      const ignorarRegex   = /^(AV\b|RUA\b|R\.\s|ROD\b|ESTRADA\b)/i;
+
+      for (let i = blocoAntes.length - 1; i >= 0; i--) {
+        const linha = blocoAntes[i].trim();
+        if (!linha) continue;
+        if (/Nº Obra|Obra\s+DATA/.test(linha)) break;
+        if (ignorarPrefixo.some(p => linha.startsWith(p))) continue;
+        if (ignorarRegex.test(linha)) continue;
+        if (/UF:\s*[A-Z]{2}|CEP:|Bairro:/.test(linha)) continue;
+        const palavras = linha.split(/\s+/);
+        if (palavras.some(p => EXCLUIR_FORN.has(p))) continue;
+        if (linha.length > 4 && /[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{3}/.test(linha)) {
+          r.fornecedor = linha;
+          break;
+        }
+      }
+    }
+  }
+
+  // ── 5. CNPJ Fornecedor ───────────────────────────────────────
+  m = txtLimpo.match(/CNPJ\/CPF\s*:?[^0-9]*(\d{2}[\.\s]?\d{3}[\.\s]?\d{3}[\/\s]?\d{4}[-\s]?\d{2})/i);
+  if (m) r.cnpj_fornecedor = m[1].replace(/\s/g, '').trim();
+
+  // ── 6. Valor Total ───────────────────────────────────────────
+  m = txtLimpo.match(/Total\s*:?[^0-9]*([\d\.]+,[0-9]{2})/i);
+  if (m) {
+    r.valor_total = parseFloat(m[1].replace(/\./g,'').replace(',','.'));
+  }
 
   return r;
 }
-
 
 async function renderOC() {
   const { ordens_compra, obras, planilhas } = await loadAll();
@@ -1241,7 +1247,6 @@ async function renderLancamentos() {
       </div>
     </div>
 
-    <!-- Totais rápidos -->
     <div class="stats-grid" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:16px">
       <div class="stat-card">
         <div class="stat-card-inner"><div><div class="stat-label">Total Despesas</div><div class="stat-value sm red">${fmt(totalDesp)}</div></div><div class="stat-icon red">📉</div></div>
@@ -1254,7 +1259,6 @@ async function renderLancamentos() {
       </div>
     </div>
 
-    <!-- Filtros -->
     <div class="card" style="margin-bottom:12px">
       <div class="card-body" style="padding:14px">
         <div class="filter-row" style="flex-wrap:wrap;gap:8px">
@@ -1542,7 +1546,6 @@ async function renderHorasExtras() {
       </div>
     </div>
 
-    <!-- Resumo do mês -->
     <div class="stats-grid" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:16px">
       <div class="stat-card">
         <div class="stat-card-inner"><div><div class="stat-label">Total de Horas</div><div class="stat-value">${totalHoras.toFixed(1)}h</div></div><div class="stat-icon blue">⏱</div></div>
@@ -1558,7 +1561,6 @@ async function renderHorasExtras() {
       </div>
     </div>
 
-    <!-- Por funcionário -->
     ${ativos.map(f => {
       const regsFunc = registros.filter(r=>r.funcionario_id===f.id)
         .sort((a,b)=>b.data.localeCompare(a.data));
@@ -1669,7 +1671,6 @@ async function showRegistrarHoraExtra() {
         <label class="form-label">Observação</label>
         <input id="he-desc" class="form-input" placeholder="Ex: Reforço para entrega do prazo">
       </div>
-      <!-- Preview do cálculo -->
       <div id="he-preview" style="background:var(--surface2);border-radius:10px;padding:14px;margin-top:4px;display:none">
         <div style="font-size:12px;color:var(--text3);margin-bottom:6px">Cálculo automático</div>
         <div id="he-calc-detalhe" style="font-size:13px;color:var(--text2)"></div>

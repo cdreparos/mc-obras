@@ -901,8 +901,15 @@ async function processarArquivoOC(file) {
     }
 
     const OCR_KEY = window.OCRSPACE_API_KEY || 'helloworld';
+
+    // Converte PDF para imagem antes de enviar (mais rápido que enviar PDF direto)
+    // Engine 1 = ~3-5s, Engine 2 = ~15-40s mas mais preciso
     let fileEnvio = file;
-    if (isImg) fileEnvio = await redimensionarImagem(file, 1800);
+    if (isPDF) {
+      fileEnvio = await pdfParaImagem(file);
+    } else {
+      fileEnvio = await redimensionarImagem(file, 1800);
+    }
 
     const formData = new FormData();
     formData.append('apikey',            OCR_KEY);
@@ -911,8 +918,7 @@ async function processarArquivoOC(file) {
     formData.append('detectOrientation', 'true');
     formData.append('scale',             'true');
     formData.append('OCREngine',         '2');
-    if (isPDF) formData.append('filetype', 'PDF');
-    formData.append('file', fileEnvio, file.name);
+    formData.append('file', fileEnvio, 'oc.png');
 
     const resp = await fetch('https://api.ocr.space/parse/image', { method: 'POST', body: formData });
     if (!resp.ok) throw new Error(`OCR.space HTTP ${resp.status}`);
@@ -926,6 +932,8 @@ async function processarArquivoOC(file) {
     console.log('[OCR] Texto bruto:\n', texto);
     const dados = parsearOC(texto);
     console.log('[OCR] Dados parseados:', dados);
+    // Guarda texto bruto para exibir no debug
+    window._ocrTexto = texto;
     await exibirPreviewOC(dados, file.name);
 
   } catch(err) {
@@ -955,6 +963,39 @@ function redimensionarImagem(file, maxDim) {
     img.src = url;
   });
 }
+// Converte a primeira página do PDF em PNG para envio ao OCR
+async function pdfParaImagem(file) {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    if (typeof pdfjsLib === 'undefined') {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+        s.onload = () => {
+          pdfjsLib.GlobalWorkerOptions.workerSrc =
+            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+          resolve();
+        };
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
+    }
+    const pdf      = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+    const page     = await pdf.getPage(1);
+    const viewport = page.getViewport({ scale: 2.0 });
+    const canvas   = document.createElement('canvas');
+    canvas.width   = viewport.width;
+    canvas.height  = viewport.height;
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    return await new Promise(resolve => {
+      canvas.toBlob(blob => resolve(new File([blob], 'oc.png', { type: 'image/png' })), 'image/png');
+    });
+  } catch(e) {
+    console.warn('pdf.js falhou, enviando PDF direto:', e);
+    return file; // fallback: envia PDF original
+  }
+}
+
 async function exibirPreviewOC(input, filename) {
   const { obras, planilhas } = await loadAll();
   // Aceita tanto texto bruto (string) quanto objeto já parseado
@@ -970,7 +1011,7 @@ async function exibirPreviewOC(input, filename) {
   document.getElementById('oc-step1').style.display = 'none';
   document.getElementById('oc-step2').innerHTML = `
     <div class="alert success no-click"><span>✓ OCR concluído</span></div>
-    <details style="margin:8px 0;font-size:11px"><summary style="cursor:pointer;color:var(--primary)">Ver texto bruto do OCR (debug)</summary><pre style="background:#f5f5f5;padding:8px;border-radius:4px;max-height:150px;overflow:auto;white-space:pre-wrap;font-size:10px">${typeof input === 'string' ? input.substring(0,1000) : JSON.stringify(dados,null,2)}</pre></details>
+    <details style="margin:8px 0;font-size:11px"><summary style="cursor:pointer;color:var(--primary)">Ver texto bruto do OCR (debug)</summary><pre style="background:#f5f5f5;padding:8px;border-radius:4px;max-height:200px;overflow:auto;white-space:pre-wrap;font-size:10px">${typeof input === 'string' ? input.substring(0,1000) : JSON.stringify(dados,null,2)}</pre></details>
 
     <div class="oc-preview">
       <div class="oc-preview-header">Dados Extraídos da OC</div>

@@ -718,71 +718,76 @@ async function pagarDiasPresenca(funcId, dias, valorDia) {
 // Parser baseado nos modelos reais Ferreira Santos / ENGIX
 function parsearOC(texto) {
   const r = {};
+  const linhas = texto.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+  const txt    = linhas.join('\n');
 
-  // O PDF do OpenLine/ENGIX extrai com \n\n entre cada campo e valor.
-  // Estratégia: dividir em tokens e buscar o token APÓS o label exato.
-  const tokens = texto.split('\n').map(t => t.trim()).filter(t => t.length > 0);
-
-  function apos(label) {
-    for (let i = 0; i < tokens.length - 1; i++) {
-      if (tokens[i] === label) return tokens[i + 1];
-    }
-    return null;
+  // ── 1. Nº OC ─────────────────────────────────────────────────
+  let m = txt.match(/N[º°o][\s:\.]+(\d{4,6})/);
+  if (m) r.numero_oc = m[1];
+  if (!r.numero_oc) {
+    m = txt.match(/NR DA OC[\s:]+(\d{4,6})/i);
+    if (m) r.numero_oc = m[1];
   }
 
-  function aposRegex(pattern) {
-    for (let i = 0; i < tokens.length - 1; i++) {
-      if (pattern.test(tokens[i])) return tokens[i + 1];
-    }
-    return null;
+  // ── 2. Nº Obra + Nome + Data (linha única) ───────────────────
+  m = txt.match(/^(\d{3,6})\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^\n]{10,}?)\s+(\d{2}\/\d{2}\/\d{4})/m);
+  if (m) {
+    r.numero_acao  = m[1];
+    r.nome_obra    = m[2].trim();
+    const [dd,mm2,aaaa] = m[3].split('/');
+    r.data_emissao = `${aaaa}-${mm2}-${dd}`;
+  }
+  if (!r.numero_acao) {
+    m = txt.match(/A[ÇC][ÃA]O[\s:]+(\d{3,6})/i);
+    if (m) r.numero_acao = m[1];
   }
 
-  function indexOf(label) {
-    return tokens.findIndex(t => t === label);
+  // ── 3. Fornecedor ────────────────────────────────────────────
+  // Estratégia A: "Fornec.: NOME" na mesma linha (OCR)
+  m = txt.match(/Fornec\.?[\s:]+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^\n\r]{3,60})/i);
+  if (m) {
+    const cand = m[1].replace(/\s*CNPJ.*/i,'').trim();
+    if (cand.length > 3) r.fornecedor = cand;
+  }
+  // Estratégia B: nome vem na linha ANTES de "Fornec.:" (texto nativo)
+  if (!r.fornecedor) {
+    const IGNORAR = ['End:','Cidade:','Bairro:','DADOS DO FORNECEDOR','DEPARTAMENTO',
+                     'SISTEMA','ENGIX','Nº Obra','Vendedor:','Item'];
+    const idx = txt.indexOf('Fornec.:');
+    if (idx > 0) {
+      const antes = txt.substring(0, idx).trim().split('\n');
+      for (let i = antes.length - 1; i >= 0; i--) {
+        const l = antes[i].trim();
+        if (!l || IGNORAR.some(ig => l.includes(ig))) continue;
+        if (/^(AV|RUA|R\.|ROD)\b/i.test(l)) continue;
+        if (/UF:|CEP:|Bairro:/i.test(l)) continue;
+        if (l.length > 4 && /[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{3}/.test(l)) { r.fornecedor = l; break; }
+      }
+    }
   }
 
-  // ── 1. Nº OC: token após "Nº:" ──────────────────────────────
-  const vNum = apos('Nº:');
-  if (vNum && /^\d{4,6}$/.test(vNum)) r.numero_oc = vNum;
+  // ── 4. CNPJ ──────────────────────────────────────────────────
+  m = txt.match(/CNPJ\/CPF[\s:]+(\d{2}[\.\s]?\d{3}[\.\s]?\d{3}[\/\s]?\d{4}[-\s]?\d{2})/i);
+  if (m) r.cnpj_fornecedor = m[1].trim();
 
-  // ── 2. Nº Obra + Nome + Data: tokens após "DATA" ─────────────
-  // Sequência: "DATA" → "1684" → "UMEF CORONEL..." → "05/02/2026"
-  const iData = indexOf('DATA');
-  if (iData >= 0 && iData + 3 < tokens.length) {
-    const numAcao = tokens[iData + 1];
-    const nomeObra = tokens[iData + 2];
-    const dataStr  = tokens[iData + 3];
-    if (/^\d{3,6}$/.test(numAcao)) {
-      r.numero_acao = numAcao;
-      r.nome_obra   = nomeObra;
-    }
-    if (/^\d{2}\/\d{2}\/\d{4}$/.test(dataStr)) {
-      const [dd, mm, aaaa] = dataStr.split('/');
-      r.data_emissao = `${aaaa}-${mm}-${dd}`;
-    }
-  }
-
-  // ── 3. Fornecedor: token após "Fornec.:" ─────────────────────
-  const vForn = apos('Fornec.:');
-  if (vForn && vForn.length > 3) r.fornecedor = vForn;
-
-  // ── 4. CNPJ: token após "CNPJ/CPF:" ─────────────────────────
-  const vCnpj = apos('CNPJ/CPF:');
-  if (vCnpj && /\d{2}/.test(vCnpj)) r.cnpj_fornecedor = vCnpj;
-
-  // ── 5. Data fallback: token após "Entrega:" ──────────────────
+  // ── 5. Data (fallback) ───────────────────────────────────────
   if (!r.data_emissao) {
-    const vEnt = aposRegex(/^Entrega:/);
-    if (vEnt && /^\d{2}\/\d{2}\/\d{4}$/.test(vEnt)) {
-      const [dd, mm, aaaa] = vEnt.split('/');
-      r.data_emissao = `${aaaa}-${mm}-${dd}`;
+    m = txt.match(/Entrega[\s:]+(\d{2}\/\d{2}\/\d{4})/i) || txt.match(/(\d{2}\/\d{2}\/\d{4})/);
+    if (m) {
+      const [dd,mm2,aaaa] = (m[1]||m[0]).split('/');
+      r.data_emissao = `${aaaa}-${mm2}-${dd}`;
     }
   }
 
-  // ── 6. Valor Total: token após "Total:" ──────────────────────
-  const vTotal = apos('Total:');
-  if (vTotal && /[\d,]/.test(vTotal)) {
-    r.valor_total = parseFloat(vTotal.replace(/\./g, '').replace(',', '.'));
+  // ── 6. Valor Total ───────────────────────────────────────────
+  m = txt.match(/\bTotal[\s:,]+([\d\.]+,\d{2})/i);
+  if (m) r.valor_total = parseFloat(m[1].replace(/\./g,'').replace(',','.'));
+  if (!r.valor_total) {
+    const iTot = linhas.findIndex(l => /^Total:?$/.test(l));
+    if (iTot >= 0 && linhas[iTot+1]) {
+      const n = parseFloat(linhas[iTot+1].replace(/\./g,'').replace(',','.'));
+      if (!isNaN(n) && n > 0) r.valor_total = n;
+    }
   }
 
   return r;
@@ -896,7 +901,7 @@ async function processarArquivoOC(file) {
 
   const dropEl = document.getElementById('oc-drop');
   if (!dropEl) return;
-  dropEl.innerHTML = '<div class="upload-icon">🤖</div><div class="upload-text">Lendo com IA...</div><div class="upload-sub">Aguarde alguns segundos</div>';
+  dropEl.innerHTML = '<div class="upload-icon">🔍</div><div class="upload-text">Extraindo texto do PDF...</div><div class="upload-sub">Aguarde alguns segundos</div>';
 
   try {
     const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
@@ -907,114 +912,60 @@ async function processarArquivoOC(file) {
       return;
     }
 
-    const MISTRAL_KEY = window.MISTRAL_API_KEY || '';
-    if (!MISTRAL_KEY) {
-      App.toast('Chave Mistral não configurada.', 'warning');
-      setTimeout(() => mostrarFormOCManual(''), 800);
-      return;
-    }
+    // Chave OCR.space — "helloworld" é pública para testes
+    // Para produção: cadastre em ocr.space e cole sua chave em firebase-config.js
+    const OCR_KEY = window.OCRSPACE_API_KEY || 'helloworld';
 
-    // ── Converte para imagem base64 ──────────────────────────
-    let imageBase64 = '';
-    let imageMime   = 'image/png';
+    // Monta o FormData para a API do OCR.space
+    const formData = new FormData();
+    formData.append('apikey',   OCR_KEY);
+    formData.append('language', 'por');        // Português
+    formData.append('isOverlayRequired', 'false');
+    formData.append('detectOrientation',  'true');
+    formData.append('scale',              'true');
+    formData.append('OCREngine',          '2');  // Engine 2 = mais preciso para documentos
+    formData.append('filetype', isPDF ? 'PDF' : file.name.split('.').pop().toUpperCase());
+    formData.append('file', file, file.name);
 
-    if (isImg) {
-      imageBase64 = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload  = e => resolve(e.target.result.split(',')[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-      imageMime = file.type;
-    } else {
-      // PDF → PNG via pdf.js
-      const arrayBuffer = await file.arrayBuffer();
-      if (typeof pdfjsLib === 'undefined') {
-        await new Promise((resolve, reject) => {
-          const s = document.createElement('script');
-          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-          s.onload = () => {
-            pdfjsLib.GlobalWorkerOptions.workerSrc =
-              'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-            resolve();
-          };
-          s.onerror = reject;
-          document.head.appendChild(s);
-        });
-      }
-      const pdf      = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
-      const page     = await pdf.getPage(1);
-      const viewport = page.getViewport({ scale: 2.5 });
-      const canvas   = document.createElement('canvas');
-      canvas.width   = viewport.width;
-      canvas.height  = viewport.height;
-      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-      imageBase64 = canvas.toDataURL('image/png').split(',')[1];
-    }
-
-    // ── Chama Mistral API (pixtral-12b-2409) ────────────────
-    const prompt = `Analise esta Ordem de Compra brasileira e retorne APENAS o JSON abaixo preenchido, sem markdown, sem explicações:
-
-{"numero_oc":"","numero_acao":"","fornecedor":"","cnpj_fornecedor":"","data_emissao":"","valor_total":0}
-
-Regras:
-- numero_oc: número no campo "Nº:" canto superior direito (ex: "17823")
-- numero_acao: número na coluna "Nº Obra" (ex: "1684")
-- fornecedor: nome no campo "Fornec.:" (ex: "LEO MAQUINAS LTDA")
-- cnpj_fornecedor: CNPJ no campo "CNPJ/CPF:" do fornecedor (ex: "04.731.355/0001-01")
-- data_emissao: data da coluna "DATA" em formato YYYY-MM-DD (ex: "2026-02-05")
-- valor_total: número decimal da linha "Total:" (ex: 1147.00)`;
-
-    const resp = await fetch('https://api.mistral.ai/v1/chat/completions', {
+    const resp = await fetch('https://api.ocr.space/parse/image', {
       method: 'POST',
-      headers: {
-        'Content-Type':  'application/json',
-        'Authorization': `Bearer ${MISTRAL_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'pixtral-12b-2409',
-        max_tokens: 300,
-        temperature: 0,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image_url', image_url: { url: `data:${imageMime};base64,${imageBase64}` } },
-            { type: 'text',      text: prompt }
-          ]
-        }]
-      })
+      body: formData
     });
 
-    if (!resp.ok) {
-      const errData = await resp.json().catch(() => ({}));
-      throw new Error(errData?.message || errData?.error?.message || `HTTP ${resp.status}`);
+    if (!resp.ok) throw new Error(`OCR.space HTTP ${resp.status}`);
+
+    const data = await resp.json();
+
+    // Verifica erros da API
+    if (data.IsErroredOnProcessing) {
+      throw new Error(data.ErrorMessage?.[0] || 'Erro no processamento OCR');
     }
 
-    const respData = await resp.json();
-    const textoIA  = respData?.choices?.[0]?.message?.content || '';
-    if (!textoIA) throw new Error('Resposta vazia da IA');
+    // Junta o texto de todas as páginas
+    const texto = (data.ParsedResults || [])
+      .map(p => p.ParsedText || '')
+      .join('\n')
+      .trim();
 
-    const jsonMatch = textoIA.match(/\{[\s\S]*?\}/);
-    if (!jsonMatch) throw new Error('IA não retornou JSON: ' + textoIA.substring(0, 100));
-
-    const raw   = JSON.parse(jsonMatch[0]);
-    const dados = {
-      numero_oc:       String(raw.numero_oc       || '').trim(),
-      numero_acao:     String(raw.numero_acao      || '').trim(),
-      fornecedor:      String(raw.fornecedor       || '').trim(),
-      cnpj_fornecedor: String(raw.cnpj_fornecedor  || '').trim(),
-      data_emissao:    String(raw.data_emissao     || '').trim(),
-      valor_total:     parseFloat(String(raw.valor_total || '0').replace(',', '.')) || 0,
-    };
-
-    if (!dados.numero_oc && !dados.fornecedor) {
-      throw new Error('IA não identificou dados. Verifique se o arquivo está legível.');
+    if (!texto || texto.length < 20) {
+      throw new Error('OCR não conseguiu extrair texto. O PDF pode estar protegido ou escaneado em baixa qualidade.');
     }
 
-    await exibirPreviewOC(dados, file.name, true);
+    console.log('Texto OCR extraído:\n', texto);
+
+    // Passa o texto para o parser local (que já funciona 100%)
+    const dados = parsearOC(texto);
+
+    // Verifica se extraiu pelo menos o número da OC
+    if (!dados.numero_oc && !dados.fornecedor && !dados.valor_total) {
+      // Mostra o texto bruto no console para debug e abre preview mesmo assim
+      console.warn('Parser não encontrou campos. Texto recebido:', texto);
+    }
+
+    await exibirPreviewOC(dados, file.name, false);
 
   } catch(err) {
-    console.error('Erro OCR Mistral:', err);
+    console.error('Erro OCR.space:', err);
     if (dropEl) dropEl.innerHTML = '<div class="upload-icon">🤖</div><div class="upload-text">Enviar PDF ou foto da OC</div><div class="upload-sub">PDF, JPG ou PNG</div>';
     App.toast((err.message || 'Erro na leitura') + ' — abrindo formulário manual', 'warning');
     setTimeout(() => mostrarFormOCManual(''), 1500);

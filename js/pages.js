@@ -907,14 +907,14 @@ async function processarArquivoOC(file) {
       return;
     }
 
-    const OR_KEY = window.OPENROUTER_API_KEY || '';
-    if (!OR_KEY) {
-      App.toast('Chave OpenRouter não configurada.', 'warning');
+    const MISTRAL_KEY = window.MISTRAL_API_KEY || '';
+    if (!MISTRAL_KEY) {
+      App.toast('Chave Mistral não configurada.', 'warning');
       setTimeout(() => mostrarFormOCManual(''), 800);
       return;
     }
 
-    // ── Converte arquivo para imagem base64 ──────────────────
+    // ── Converte para imagem base64 ──────────────────────────
     let imageBase64 = '';
     let imageMime   = 'image/png';
 
@@ -929,7 +929,6 @@ async function processarArquivoOC(file) {
     } else {
       // PDF → PNG via pdf.js
       const arrayBuffer = await file.arrayBuffer();
-
       if (typeof pdfjsLib === 'undefined') {
         await new Promise((resolve, reject) => {
           const s = document.createElement('script');
@@ -943,7 +942,6 @@ async function processarArquivoOC(file) {
           document.head.appendChild(s);
         });
       }
-
       const pdf      = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
       const page     = await pdf.getPage(1);
       const viewport = page.getViewport({ scale: 2.5 });
@@ -954,36 +952,34 @@ async function processarArquivoOC(file) {
       imageBase64 = canvas.toDataURL('image/png').split(',')[1];
     }
 
-    // ── Chama OpenRouter com modelo gratuito de visão ────────
-    const prompt = `Você é um extrator de dados de Ordem de Compra (OC) brasileira.
-Analise a imagem e retorne APENAS este JSON preenchido, sem markdown, sem texto extra:
+    // ── Chama Mistral API (pixtral-12b-2409) ────────────────
+    const prompt = `Analise esta Ordem de Compra brasileira e retorne APENAS o JSON abaixo preenchido, sem markdown, sem explicações:
 
 {"numero_oc":"","numero_acao":"","fornecedor":"","cnpj_fornecedor":"","data_emissao":"","valor_total":0}
 
-- numero_oc: campo "Nº:" canto superior direito (ex: "17823")
-- numero_acao: coluna "Nº Obra" (ex: "1684")
-- fornecedor: campo "Fornec.:" nome completo (ex: "LEO MAQUINAS LTDA")
-- cnpj_fornecedor: campo "CNPJ/CPF:" do fornecedor (ex: "04.731.355/0001-01")
-- data_emissao: coluna "DATA" em formato YYYY-MM-DD (ex: "2026-02-05")
-- valor_total: linha "Total:" como número decimal (ex: 1147.00)`;
+Regras:
+- numero_oc: número no campo "Nº:" canto superior direito (ex: "17823")
+- numero_acao: número na coluna "Nº Obra" (ex: "1684")
+- fornecedor: nome no campo "Fornec.:" (ex: "LEO MAQUINAS LTDA")
+- cnpj_fornecedor: CNPJ no campo "CNPJ/CPF:" do fornecedor (ex: "04.731.355/0001-01")
+- data_emissao: data da coluna "DATA" em formato YYYY-MM-DD (ex: "2026-02-05")
+- valor_total: número decimal da linha "Total:" (ex: 1147.00)`;
 
-    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const resp = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type':  'application/json',
-        'Authorization': `Bearer ${OR_KEY}`,
-        'HTTP-Referer':  window.location.origin,
-        'X-Title':       'MC Obras'
+        'Authorization': `Bearer ${MISTRAL_KEY}`
       },
       body: JSON.stringify({
-        model: 'meta-llama/llama-3.2-11b-vision-instruct:free',
+        model: 'pixtral-12b-2409',
         max_tokens: 300,
         temperature: 0,
         messages: [{
           role: 'user',
           content: [
             { type: 'image_url', image_url: { url: `data:${imageMime};base64,${imageBase64}` } },
-            { type: 'text', text: prompt }
+            { type: 'text',      text: prompt }
           ]
         }]
       })
@@ -991,7 +987,7 @@ Analise a imagem e retorne APENAS este JSON preenchido, sem markdown, sem texto 
 
     if (!resp.ok) {
       const errData = await resp.json().catch(() => ({}));
-      throw new Error(errData?.error?.message || `HTTP ${resp.status}`);
+      throw new Error(errData?.message || errData?.error?.message || `HTTP ${resp.status}`);
     }
 
     const respData = await resp.json();
@@ -999,7 +995,7 @@ Analise a imagem e retorne APENAS este JSON preenchido, sem markdown, sem texto 
     if (!textoIA) throw new Error('Resposta vazia da IA');
 
     const jsonMatch = textoIA.match(/\{[\s\S]*?\}/);
-    if (!jsonMatch) throw new Error('IA não retornou JSON. Resposta: ' + textoIA.substring(0, 80));
+    if (!jsonMatch) throw new Error('IA não retornou JSON: ' + textoIA.substring(0, 100));
 
     const raw   = JSON.parse(jsonMatch[0]);
     const dados = {
@@ -1018,7 +1014,7 @@ Analise a imagem e retorne APENAS este JSON preenchido, sem markdown, sem texto 
     await exibirPreviewOC(dados, file.name, true);
 
   } catch(err) {
-    console.error('Erro OCR:', err);
+    console.error('Erro OCR Mistral:', err);
     if (dropEl) dropEl.innerHTML = '<div class="upload-icon">🤖</div><div class="upload-text">Enviar PDF ou foto da OC</div><div class="upload-sub">PDF, JPG ou PNG</div>';
     App.toast((err.message || 'Erro na leitura') + ' — abrindo formulário manual', 'warning');
     setTimeout(() => mostrarFormOCManual(''), 1500);

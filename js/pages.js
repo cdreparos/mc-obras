@@ -907,76 +907,110 @@ async function processarArquivoOC(file) {
       return;
     }
 
-    // Lê o arquivo como base64
-    const base64 = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload  = e => resolve(e.target.result.split(',')[1]);
-      reader.onerror = () => reject(new Error('Erro ao ler arquivo'));
-      reader.readAsDataURL(file);
-    });
-
-    // ── Chave da API Gemini ──────────────────────────────────
-    // Obtenha gratuitamente em: https://aistudio.google.com/app/apikey
-    const GEMINI_KEY = window.GEMINI_API_KEY || '';
-    if (!GEMINI_KEY) {
-      App.toast('Chave Gemini não configurada. Preencha manualmente ou configure a chave.', 'warning');
+    const GROK_KEY = window.GROK_API_KEY || '';
+    if (!GROK_KEY) {
+      App.toast('Chave Grok não configurada em firebase-config.js', 'warning');
       setTimeout(() => mostrarFormOCManual(''), 800);
       return;
     }
 
-    // Prompt estruturado para extração de OC
-    const prompt = `Você é um sistema de extração de dados de Ordem de Compra (OC) brasileira.
-Analise o documento e extraia EXATAMENTE estes campos. Responda APENAS com JSON puro, sem markdown, sem explicações.
+    // Converte PDF para imagem via canvas (Grok aceita imagens, não PDF direto)
+    // Para PDF: converte primeira página para PNG via pdf.js embutido
+    let imageBase64 = '';
+    let imageMime   = 'image/png';
 
-Campos a extrair:
-- numero_oc: número da OC (campo "Nº:" no canto superior direito, ex: "17823")
-- numero_acao: número da obra/ação (coluna "Nº Obra", ex: "1684")
-- fornecedor: nome completo do fornecedor (campo "Fornec.:", ex: "LEO MAQUINAS LTDA")
-- cnpj_fornecedor: CNPJ do fornecedor (campo "CNPJ/CPF:" ao lado do fornecedor, ex: "04.731.355/0001-01")
-- data_emissao: data em formato YYYY-MM-DD (coluna "DATA", converter de DD/MM/AAAA)
-- valor_total: valor total como número decimal (linha "Total:", ex: 1147.00)
+    if (isImg) {
+      // Imagem direta: só converte para base64
+      imageBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload  = e => resolve(e.target.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      imageMime = file.type;
+    } else {
+      // PDF: renderiza primeira página como PNG usando pdf.js (já carregado via CDN)
+      const arrayBuffer = await file.arrayBuffer();
+      const pdfData     = new Uint8Array(arrayBuffer);
 
-Responda exatamente neste formato JSON:
-{"numero_oc":"","numero_acao":"","fornecedor":"","cnpj_fornecedor":"","data_emissao":"","valor_total":0}`;
+      // Carrega pdf.js dinamicamente se não estiver disponível
+      if (typeof pdfjsLib === 'undefined') {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+          s.onload = () => {
+            pdfjsLib.GlobalWorkerOptions.workerSrc =
+              'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            resolve();
+          };
+          s.onerror = reject;
+          document.head.appendChild(s);
+        });
+      }
 
-    // Monta o request para Gemini
-    const mimeType = isPDF ? 'application/pdf' : file.type;
-    const geminiBody = {
-      contents: [{
-        parts: [
-          { text: prompt },
-          { inline_data: { mime_type: mimeType, data: base64 } }
-        ]
-      }],
-      generationConfig: {
+      const pdf      = await pdfjsLib.getDocument({ data: pdfData }).promise;
+      const page     = await pdf.getPage(1);
+      const viewport = page.getViewport({ scale: 2.0 }); // escala 2x para melhor qualidade OCR
+
+      const canvas    = document.createElement('canvas');
+      canvas.width    = viewport.width;
+      canvas.height   = viewport.height;
+      const ctx       = canvas.getContext('2d');
+
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      const dataUrl   = canvas.toDataURL('image/png');
+      imageBase64     = dataUrl.split(',')[1];
+    }
+
+    // Chama a API do Grok (xAI) — compatível com formato OpenAI
+    const prompt = `Você é um sistema de extração de dados de Ordem de Compra (OC) brasileira da construtora ENGIX/OpenLine.
+Analise a imagem e extraia estes campos. Responda APENAS com JSON puro, sem markdown nem explicações.
+
+{"numero_oc":"","numero_acao":"","fornecedor":"","cnpj_fornecedor":"","data_emissao":"","valor_total":0}
+
+Instruções:
+- numero_oc: número no campo "Nº:" canto superior direito (ex: "17823")
+- numero_acao: número na coluna "Nº Obra" (ex: "1684")
+- fornecedor: nome completo no campo "Fornec.:" (ex: "LEO MAQUINAS LTDA")
+- cnpj_fornecedor: CNPJ no campo "CNPJ/CPF:" ao lado do fornecedor (ex: "04.731.355/0001-01")
+- data_emissao: data da coluna "DATA" convertida para YYYY-MM-DD (ex: "2026-02-05")
+- valor_total: número decimal da linha "Total:" (ex: 1147.00)`;
+
+    const resp = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROK_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'grok-2-vision-latest',
+        max_tokens: 512,
         temperature: 0,
-        maxOutputTokens: 512,
-      }
-    };
-
-    const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(geminiBody)
-      }
-    );
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'image_url',
+              image_url: { url: `data:${imageMime};base64,${imageBase64}` }
+            },
+            { type: 'text', text: prompt }
+          ]
+        }]
+      })
+    });
 
     if (!resp.ok) {
       const errData = await resp.json().catch(() => ({}));
-      const msg = errData?.error?.message || `Erro HTTP ${resp.status}`;
-      throw new Error(msg);
+      throw new Error(errData?.error?.message || `HTTP ${resp.status}`);
     }
 
     const respData = await resp.json();
-    const textoIA  = respData?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const textoIA  = respData?.choices?.[0]?.message?.content || '';
+    if (!textoIA) throw new Error('Resposta vazia do Grok');
 
-    if (!textoIA) throw new Error('Resposta vazia da IA');
-
-    // Parse do JSON retornado
+    // Parse JSON da resposta
     const jsonMatch = textoIA.match(/\{[\s\S]*?\}/);
-    if (!jsonMatch) throw new Error('IA não retornou JSON válido: ' + textoIA.substring(0, 100));
+    if (!jsonMatch) throw new Error('Grok não retornou JSON válido');
 
     const raw = JSON.parse(jsonMatch[0]);
     const dados = {
@@ -988,30 +1022,22 @@ Responda exatamente neste formato JSON:
       valor_total:     parseFloat(String(raw.valor_total || '0').replace(',', '.')) || 0,
     };
 
-    // Verifica se extraiu pelo menos o número da OC
     if (!dados.numero_oc && !dados.fornecedor) {
-      throw new Error('IA não conseguiu extrair dados. Verifique se o arquivo é legível.');
+      throw new Error('IA não encontrou dados. Verifique se o arquivo está legível.');
     }
 
     await exibirPreviewOC(dados, file.name, true);
 
   } catch(err) {
-    console.error('Erro OCR Gemini:', err);
+    console.error('Erro OCR Grok:', err);
     if (dropEl) {
       dropEl.innerHTML = '<div class="upload-icon">🤖</div><div class="upload-text">Enviar PDF ou foto da OC</div><div class="upload-sub">Leitura automática por IA · PDF, JPG ou PNG</div>';
     }
 
-    let msg = 'Erro na leitura. Preencha manualmente.';
-    if (err.message && err.message.includes('Quota exceeded')) {
-      msg = 'Limite da IA atingido. Abrindo formulário manual...';
-    } else if (err.message && err.message.includes('API_KEY')) {
-      msg = 'Chave da IA inválida. Configure em firebase-config.js';
-    } else if (err.message) {
-      msg = err.message.substring(0, 80);
-    }
-
+    let msg = 'Erro na leitura. Abrindo formulário manual...';
+    if (err.message) msg = err.message.substring(0, 100);
     App.toast(msg, 'warning');
-    setTimeout(() => mostrarFormOCManual(''), 1200);
+    setTimeout(() => mostrarFormOCManual(''), 1500);
   }
 }
 

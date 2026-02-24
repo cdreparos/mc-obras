@@ -955,7 +955,7 @@ Responda exatamente neste formato JSON:
     };
 
     const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1000,8 +1000,18 @@ Responda exatamente neste formato JSON:
     if (dropEl) {
       dropEl.innerHTML = '<div class="upload-icon">🤖</div><div class="upload-text">Enviar PDF ou foto da OC</div><div class="upload-sub">Leitura automática por IA · PDF, JPG ou PNG</div>';
     }
-    App.toast('Erro na leitura: ' + err.message, 'error');
-    setTimeout(() => mostrarFormOCManual(''), 2000);
+
+    let msg = 'Erro na leitura. Preencha manualmente.';
+    if (err.message && err.message.includes('Quota exceeded')) {
+      msg = 'Limite da IA atingido. Abrindo formulário manual...';
+    } else if (err.message && err.message.includes('API_KEY')) {
+      msg = 'Chave da IA inválida. Configure em firebase-config.js';
+    } else if (err.message) {
+      msg = err.message.substring(0, 80);
+    }
+
+    App.toast(msg, 'warning');
+    setTimeout(() => mostrarFormOCManual(''), 1200);
   }
 }
 

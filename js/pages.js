@@ -743,13 +743,11 @@ function parsearOC(texto) {
   }
 
   // ── 3. Fornecedor ────────────────────────────────────────────
-  // Estratégia A: "Fornec.: NOME" na mesma linha (OCR)
   m = txt.match(/Fornec\.?[\s:]+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^\n\r]{3,60})/i);
   if (m) {
     const cand = m[1].replace(/\s*CNPJ.*/i,'').trim();
     if (cand.length > 3) r.fornecedor = cand;
   }
-  // Estratégia B: nome vem na linha ANTES de "Fornec.:" (texto nativo)
   if (!r.fornecedor) {
     const IGNORAR = ['End:','Cidade:','Bairro:','DADOS DO FORNECEDOR','DEPARTAMENTO',
                      'SISTEMA','ENGIX','Nº Obra','Vendedor:','Item'];
@@ -766,134 +764,45 @@ function parsearOC(texto) {
     }
   }
 
-  // ── 4. CNPJ ──────────────────────────────────────────────────
-  m = txt.match(/CNPJ\/CPF[\s:]+(\d{2}[\.\s]?\d{3}[\.\s]?\d{3}[\/\s]?\d{4}[-\s]?\d{2})/i);
-  if (m) r.cnpj_fornecedor = m[1].trim();
+  // ── 4. CNPJ Fornecedor ───────────────────────────────────────
+  // Busca APÓS "Fornec" para não pegar o CNPJ da empresa (que vem antes)
+  // Tolerante a variações de OCR: CNPJ/CPF, CNPJICPF, CNPJ CPF
+  const idxFornec = txt.toLowerCase().indexOf('fornec');
+  const txtFornec = idxFornec >= 0 ? txt.substring(idxFornec) : txt;
+  const cnpjPatterns = [
+    /CNPJ[\/I\s]*CPF[\s:]*([\d]{2}[\.\s]?[\d]{3}[\.\s]?[\d]{3}[\s\/]?[\d]{4}[\s\-]?[\d]{2})/i,
+    /CNPJ[\s:]*([\d]{2}[\.\s]?[\d]{3}[\.\s]?[\d]{3}[\s\/]?[\d]{4}[\s\-]?[\d]{2})/i,
+  ];
+  for (const pat of cnpjPatterns) {
+    m = txtFornec.match(pat);
+    if (m) { r.cnpj_fornecedor = m[1].trim(); break; }
+  }
 
   // ── 5. Data (fallback) ───────────────────────────────────────
   if (!r.data_emissao) {
     m = txt.match(/Entrega[\s:]+(\d{2}\/\d{2}\/\d{4})/i) || txt.match(/(\d{2}\/\d{2}\/\d{4})/);
     if (m) {
-      const [dd,mm2,aaaa] = (m[1]||m[0]).split('/');
+      const [dd,mm2,aaaa] = m[1].split('/');
       r.data_emissao = `${aaaa}-${mm2}-${dd}`;
     }
   }
 
   // ── 6. Valor Total ───────────────────────────────────────────
-  m = txt.match(/\bTotal[\s:,]+([\d\.]+,\d{2})/i);
-  if (m) r.valor_total = parseFloat(m[1].replace(/\./g,'').replace(',','.'));
-  if (!r.valor_total) {
-    const iTot = linhas.findIndex(l => /^Total:?$/.test(l));
-    if (iTot >= 0 && linhas[iTot+1]) {
-      const n = parseFloat(linhas[iTot+1].replace(/\./g,'').replace(',','.'));
-      if (!isNaN(n) && n > 0) r.valor_total = n;
+  // Garante padrão monetário BR (com vírgula decimal) para não confundir com CNPJ
+  m = txt.match(/\bTotal[\s:,]*([\d]{1,3}(?:\.[\d]{3})*,[\d]{2})\b/i);
+  if (m) {
+    r.valor_total = parseFloat(m[1].replace(/\./g,'').replace(',','.'));
+  } else {
+    // Fallback: próximo valor monetário após última ocorrência de "Total"
+    const iTot = txt.toLowerCase().lastIndexOf('total');
+    if (iTot >= 0) {
+      const trecho = txt.substring(iTot, iTot + 60);
+      const m2 = trecho.match(/([\d]{1,3}(?:\.[\d]{3})*,[\d]{2})/);
+      if (m2) r.valor_total = parseFloat(m2[1].replace(/\./g,'').replace(',','.'));
     }
   }
 
   return r;
-}
-
-
-async function renderOC() {
-  const { ordens_compra, obras, planilhas } = await loadAll();
-  const main = document.getElementById('main-content');
-  const ativas    = ordens_compra.filter(o=>o.status==='ativa');
-  const canceladas= ordens_compra.filter(o=>o.status==='cancelada');
-
-  main.innerHTML = `
-  <div class="page">
-    <div class="page-header">
-      <h1 class="page-title"><div class="page-title-icon">📄</div>Ordens de Compra</h1>
-      <div class="page-actions">
-        <button class="btn btn-primary" onclick="showImportarOC()">+ Importar OC</button>
-      </div>
-    </div>
-
-    <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px">
-      <div class="stat-card">
-        <div class="stat-card-inner"><div><div class="stat-label">OCs Ativas</div><div class="stat-value">${ativas.length}</div></div><div class="stat-icon blue">📄</div></div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-card-inner"><div><div class="stat-label">Total Comprometido</div><div class="stat-value sm">${fmt(ativas.reduce((s,o)=>s+(o.valor_total||0),0))}</div></div><div class="stat-icon red">💸</div></div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-card-inner"><div><div class="stat-label">Canceladas</div><div class="stat-value">${canceladas.length}</div></div><div class="stat-icon yellow">🚫</div></div>
-      </div>
-    </div>
-
-    <div class="card" style="margin-bottom:14px">
-      <div class="card-header"><span class="card-title-lg">OCs Ativas</span></div>
-      <div class="card-body">
-        ${ativas.length===0 ? '<div class="empty">Nenhuma OC ativa</div>' :
-          ativas.map(oc=>ocRow(oc,obras,planilhas,true)).join('')}
-      </div>
-    </div>
-
-    ${canceladas.length>0 ? `
-    <div class="card">
-      <div class="card-header"><span class="card-title-lg">OCs Canceladas</span></div>
-      <div class="card-body">
-        ${canceladas.map(oc=>ocRow(oc,obras,planilhas,false)).join('')}
-      </div>
-    </div>` : ''}
-  </div>`;
-}
-
-function ocRow(oc, obras, planilhas, canCancel) {
-  const obra = obras.find(o=>o.id===oc.obra_id);
-  const pl   = planilhas.find(p=>p.id===oc.planilha_id);
-  return `
-  <div class="oc-row ${oc.status==='cancelada'?'cancelada':''}">
-    <div class="oc-header">
-      <span class="oc-num">OC ${oc.numero_oc||'—'} · Ação ${oc.numero_acao||'—'}</span>
-      <span class="oc-date">${fmtDate(oc.data_emissao)}</span>
-    </div>
-    <div class="oc-forn">${oc.fornecedor||'—'}</div>
-    <div class="oc-footer">
-      <div style="display:flex;gap:5px;flex-wrap:wrap">
-        <span class="tag blue">${obra?.nome||'—'}</span>
-        <span class="tag">${pl?.nome||'Sem planilha'}</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:10px">
-        <span class="oc-value">${fmt(oc.valor_total)}</span>
-        ${canCancel
-          ? `<button class="btn btn-danger btn-sm" onclick="cancelarOCGlobal('${oc.id}')">Cancelar</button>`
-          : `<span class="badge cancelada">cancelada</span>`}
-      </div>
-    </div>
-  </div>`;
-}
-
-async function cancelarOCGlobal(ocId) {
-  const snap = await empresaCol('ordens_compra').doc(ocId).get();
-  const oc = snap.data();
-  await cancelarOC(ocId, oc.obra_id);
-  App.navigate('ordens_compra');
-}
-
-async function showImportarOC(obraIdPre = '') {
-  const { obras } = await loadAll();
-  showModal({
-    title: 'Importar Ordem de Compra',
-    body: `
-      <div id="oc-step1">
-        <div class="upload-area" id="oc-drop" onclick="document.getElementById('oc-file').click()"
-          ondragover="event.preventDefault();this.classList.add('drag')"
-          ondragleave="this.classList.remove('drag')"
-          ondrop="event.preventDefault();this.classList.remove('drag');processarArquivoOC(event.dataTransfer.files[0])">
-          <div class="upload-icon">🤖</div>
-          <div class="upload-text">Enviar PDF ou foto da OC</div>
-          <div class="upload-sub">Leitura automática por IA · PDF, JPG ou PNG</div>
-          <input type="file" id="oc-file" accept=".pdf,image/*" capture="environment" style="display:none" onchange="processarArquivoOC(this.files[0])">
-        </div>
-        <div style="margin-top:12px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap">
-          <button class="btn-link" onclick="document.getElementById('oc-file').click()">📷 Tirar foto da OC</button>
-          <span style="color:var(--border2)">·</span>
-          <button class="btn-link" onclick="mostrarFormOCManual('${obraIdPre}')">✏️ Preencher manualmente</button>
-        </div>
-      </div>
-      <div id="oc-step2" style="display:none"></div>`
-  });
 }
 
 async function processarArquivoOC(file) {
@@ -901,31 +810,35 @@ async function processarArquivoOC(file) {
 
   const dropEl = document.getElementById('oc-drop');
   if (!dropEl) return;
-  dropEl.innerHTML = '<div class="upload-icon">🔍</div><div class="upload-text">Extraindo texto do PDF...</div><div class="upload-sub">Aguarde alguns segundos</div>';
+  dropEl.innerHTML = '<div class="upload-icon">🔍</div><div class="upload-text">Extraindo texto...</div><div class="upload-sub">Aguarde alguns segundos</div>';
 
   try {
     const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
     const isImg = file.type.startsWith('image/');
     if (!isPDF && !isImg) {
       App.toast('Use PDF ou imagem (JPG, PNG).', 'error');
-      dropEl.innerHTML = '<div class="upload-icon">🤖</div><div class="upload-text">Enviar PDF ou foto da OC</div><div class="upload-sub">PDF, JPG ou PNG</div>';
+      dropEl.innerHTML = '<div class="upload-icon">🔍</div><div class="upload-text">Enviar PDF ou foto da OC</div><div class="upload-sub">PDF, JPG ou PNG · Tirar foto pelo celular</div>';
       return;
     }
 
-    // Chave OCR.space — "helloworld" é pública para testes
-    // Para produção: cadastre em ocr.space e cole sua chave em firebase-config.js
     const OCR_KEY = window.OCRSPACE_API_KEY || 'helloworld';
 
-    // Monta o FormData para a API do OCR.space
+    // Para imagens (celular): redimensiona para max 1800px antes de enviar
+    // Fotos de celular têm 4-8MB e o limite do OCR.space é 5MB
+    let fileParaEnviar = file;
+    if (isImg) {
+      fileParaEnviar = await redimensionarImagem(file, 1800);
+    }
+
     const formData = new FormData();
-    formData.append('apikey',   OCR_KEY);
-    formData.append('language', 'por');        // Português
-    formData.append('isOverlayRequired', 'false');
+    formData.append('apikey',             OCR_KEY);
+    formData.append('language',           'por');
+    formData.append('isOverlayRequired',  'false');
     formData.append('detectOrientation',  'true');
     formData.append('scale',              'true');
-    formData.append('OCREngine',          '2');  // Engine 2 = mais preciso para documentos
-    formData.append('filetype', isPDF ? 'PDF' : file.name.split('.').pop().toUpperCase());
-    formData.append('file', file, file.name);
+    formData.append('OCREngine',          '2');
+    if (isPDF) formData.append('filetype', 'PDF');
+    formData.append('file', fileParaEnviar, file.name);
 
     const resp = await fetch('https://api.ocr.space/parse/image', {
       method: 'POST',
@@ -936,41 +849,55 @@ async function processarArquivoOC(file) {
 
     const data = await resp.json();
 
-    // Verifica erros da API
     if (data.IsErroredOnProcessing) {
       throw new Error(data.ErrorMessage?.[0] || 'Erro no processamento OCR');
     }
 
-    // Junta o texto de todas as páginas
     const texto = (data.ParsedResults || [])
       .map(p => p.ParsedText || '')
       .join('\n')
       .trim();
 
     if (!texto || texto.length < 20) {
-      throw new Error('OCR não conseguiu extrair texto. O PDF pode estar protegido ou escaneado em baixa qualidade.');
+      throw new Error('OCR não extraiu texto. Verifique se o arquivo está legível.');
     }
 
-    console.log('Texto OCR extraído:\n', texto);
+    console.log('[OCR] Texto extraído:\n', texto);
 
-    // Passa o texto para o parser local (que já funciona 100%)
     const dados = parsearOC(texto);
-
-    // Verifica se extraiu pelo menos o número da OC
-    if (!dados.numero_oc && !dados.fornecedor && !dados.valor_total) {
-      // Mostra o texto bruto no console para debug e abre preview mesmo assim
-      console.warn('Parser não encontrou campos. Texto recebido:', texto);
-    }
+    console.log('[OCR] Dados parseados:', dados);
 
     await exibirPreviewOC(dados, file.name, false);
 
   } catch(err) {
     console.error('Erro OCR.space:', err);
-    if (dropEl) dropEl.innerHTML = '<div class="upload-icon">🤖</div><div class="upload-text">Enviar PDF ou foto da OC</div><div class="upload-sub">PDF, JPG ou PNG</div>';
+    if (dropEl) dropEl.innerHTML = '<div class="upload-icon">🔍</div><div class="upload-text">Enviar PDF ou foto da OC</div><div class="upload-sub">PDF, JPG ou PNG · Tirar foto pelo celular</div>';
     App.toast((err.message || 'Erro na leitura') + ' — abrindo formulário manual', 'warning');
     setTimeout(() => mostrarFormOCManual(''), 1500);
   }
 }
+
+// Redimensiona imagem para max largura/altura mantendo proporção
+function redimensionarImagem(file, maxDim) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const ratio  = Math.min(maxDim / img.width, maxDim / img.height, 1);
+      const canvas = document.createElement('canvas');
+      canvas.width  = Math.round(img.width  * ratio);
+      canvas.height = Math.round(img.height * ratio);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(blob => {
+        resolve(new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' }));
+      }, 'image/jpeg', 0.88);
+    };
+    img.onerror = () => resolve(file); // fallback: usa original
+    img.src = url;
+  });
+}
+
 
 async function exibirPreviewOC(dados, filename, viaIA=false) {
   const { obras, planilhas } = await loadAll();

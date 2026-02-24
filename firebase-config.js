@@ -24,11 +24,11 @@ const storage = firebase.storage();
 const EMPRESA_ID = "marques-caetano";
 
 // ============================================================
-// CHAVE GROK (xAI) — Leitura automática de OC por IA
-// 1. Acesse: https://console.x.ai
-// 2. Crie uma conta e vá em "API Keys"
-// 3. Clique em "Create API Key", copie e cole abaixo
-// Plano gratuito: US$25 de crédito inicial (suficiente para centenas de OCs)
+// CHAVE OPENROUTER — Leitura automática de OC por IA (GRATUITO)
+// 1. Acesse: https://openrouter.ai  e crie uma conta gratuita
+// 2. Vá em: https://openrouter.ai/keys  e clique em "Create Key"
+// 3. Copie a chave e cole abaixo entre as aspas
+// Modelo usado: Llama 3.2 Vision (Meta) — 100% gratuito
+// Limite: 20 req/min, sem custo — mais que suficiente para OCs
 // ============================================================
-window.GROK_API_KEY = "xai-adROKtbz9GBo0Z2nE24A59GZoDIHDHYekNq8p4xxczxp6tPMnDoOiY4PbVR0kHAVSIBnQSjnUf7m61K7";  // ← Cole sua chave xAI aqui
-
+window.OPENROUTER_API_KEY = "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";  // ← Cole sua chave aqui

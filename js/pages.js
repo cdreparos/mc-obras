@@ -970,7 +970,8 @@ async function exibirPreviewOC(input, filename) {
 
   document.getElementById('oc-step1').style.display = 'none';
   document.getElementById('oc-step2').innerHTML = `
-    <div class="alert success no-click"><span>✓ Dados extraídos — confira e ajuste se necessário</span></div>
+    <div class="alert success no-click"><span>✓ OCR concluído</span></div>
+    <details style="margin:8px 0;font-size:11px"><summary style="cursor:pointer;color:var(--primary)">Ver texto bruto do OCR (debug)</summary><pre style="background:#f5f5f5;padding:8px;border-radius:4px;max-height:150px;overflow:auto;white-space:pre-wrap;font-size:10px">${typeof input === 'string' ? input.substring(0,1000) : JSON.stringify(dados,null,2)}</pre></details>
 
     <div class="oc-preview">
       <div class="oc-preview-header">Dados Extraídos da OC</div>

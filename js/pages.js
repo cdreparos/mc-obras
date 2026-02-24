@@ -903,24 +903,22 @@ async function processarArquivoOC(file) {
     const isImg = file.type.startsWith('image/');
     if (!isPDF && !isImg) {
       App.toast('Use PDF ou imagem (JPG, PNG).', 'error');
-      dropEl.innerHTML = '<div class="upload-icon">🤖</div><div class="upload-text">Enviar PDF ou foto da OC</div><div class="upload-sub">Leitura automática por IA · PDF, JPG ou PNG</div>';
+      dropEl.innerHTML = '<div class="upload-icon">🤖</div><div class="upload-text">Enviar PDF ou foto da OC</div><div class="upload-sub">PDF, JPG ou PNG</div>';
       return;
     }
 
-    const GROK_KEY = window.GROK_API_KEY || '';
-    if (!GROK_KEY) {
-      App.toast('Chave Grok não configurada em firebase-config.js', 'warning');
+    const OR_KEY = window.OPENROUTER_API_KEY || '';
+    if (!OR_KEY) {
+      App.toast('Chave OpenRouter não configurada.', 'warning');
       setTimeout(() => mostrarFormOCManual(''), 800);
       return;
     }
 
-    // Converte PDF para imagem via canvas (Grok aceita imagens, não PDF direto)
-    // Para PDF: converte primeira página para PNG via pdf.js embutido
+    // ── Converte arquivo para imagem base64 ──────────────────
     let imageBase64 = '';
     let imageMime   = 'image/png';
 
     if (isImg) {
-      // Imagem direta: só converte para base64
       imageBase64 = await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload  = e => resolve(e.target.result.split(',')[1]);
@@ -929,11 +927,9 @@ async function processarArquivoOC(file) {
       });
       imageMime = file.type;
     } else {
-      // PDF: renderiza primeira página como PNG usando pdf.js (já carregado via CDN)
+      // PDF → PNG via pdf.js
       const arrayBuffer = await file.arrayBuffer();
-      const pdfData     = new Uint8Array(arrayBuffer);
 
-      // Carrega pdf.js dinamicamente se não estiver disponível
       if (typeof pdfjsLib === 'undefined') {
         await new Promise((resolve, reject) => {
           const s = document.createElement('script');
@@ -948,51 +944,45 @@ async function processarArquivoOC(file) {
         });
       }
 
-      const pdf      = await pdfjsLib.getDocument({ data: pdfData }).promise;
+      const pdf      = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
       const page     = await pdf.getPage(1);
-      const viewport = page.getViewport({ scale: 2.0 }); // escala 2x para melhor qualidade OCR
-
-      const canvas    = document.createElement('canvas');
-      canvas.width    = viewport.width;
-      canvas.height   = viewport.height;
-      const ctx       = canvas.getContext('2d');
-
-      await page.render({ canvasContext: ctx, viewport }).promise;
-      const dataUrl   = canvas.toDataURL('image/png');
-      imageBase64     = dataUrl.split(',')[1];
+      const viewport = page.getViewport({ scale: 2.5 });
+      const canvas   = document.createElement('canvas');
+      canvas.width   = viewport.width;
+      canvas.height  = viewport.height;
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+      imageBase64 = canvas.toDataURL('image/png').split(',')[1];
     }
 
-    // Chama a API do Grok (xAI) — compatível com formato OpenAI
-    const prompt = `Você é um sistema de extração de dados de Ordem de Compra (OC) brasileira da construtora ENGIX/OpenLine.
-Analise a imagem e extraia estes campos. Responda APENAS com JSON puro, sem markdown nem explicações.
+    // ── Chama OpenRouter com modelo gratuito de visão ────────
+    const prompt = `Você é um extrator de dados de Ordem de Compra (OC) brasileira.
+Analise a imagem e retorne APENAS este JSON preenchido, sem markdown, sem texto extra:
 
 {"numero_oc":"","numero_acao":"","fornecedor":"","cnpj_fornecedor":"","data_emissao":"","valor_total":0}
 
-Instruções:
-- numero_oc: número no campo "Nº:" canto superior direito (ex: "17823")
-- numero_acao: número na coluna "Nº Obra" (ex: "1684")
-- fornecedor: nome completo no campo "Fornec.:" (ex: "LEO MAQUINAS LTDA")
-- cnpj_fornecedor: CNPJ no campo "CNPJ/CPF:" ao lado do fornecedor (ex: "04.731.355/0001-01")
-- data_emissao: data da coluna "DATA" convertida para YYYY-MM-DD (ex: "2026-02-05")
-- valor_total: número decimal da linha "Total:" (ex: 1147.00)`;
+- numero_oc: campo "Nº:" canto superior direito (ex: "17823")
+- numero_acao: coluna "Nº Obra" (ex: "1684")
+- fornecedor: campo "Fornec.:" nome completo (ex: "LEO MAQUINAS LTDA")
+- cnpj_fornecedor: campo "CNPJ/CPF:" do fornecedor (ex: "04.731.355/0001-01")
+- data_emissao: coluna "DATA" em formato YYYY-MM-DD (ex: "2026-02-05")
+- valor_total: linha "Total:" como número decimal (ex: 1147.00)`;
 
-    const resp = await fetch('https://api.x.ai/v1/chat/completions', {
+    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GROK_KEY}`
+        'Content-Type':  'application/json',
+        'Authorization': `Bearer ${OR_KEY}`,
+        'HTTP-Referer':  window.location.origin,
+        'X-Title':       'MC Obras'
       },
       body: JSON.stringify({
-        model: 'grok-2-vision-latest',
-        max_tokens: 512,
+        model: 'meta-llama/llama-3.2-11b-vision-instruct:free',
+        max_tokens: 300,
         temperature: 0,
         messages: [{
           role: 'user',
           content: [
-            {
-              type: 'image_url',
-              image_url: { url: `data:${imageMime};base64,${imageBase64}` }
-            },
+            { type: 'image_url', image_url: { url: `data:${imageMime};base64,${imageBase64}` } },
             { type: 'text', text: prompt }
           ]
         }]
@@ -1006,13 +996,12 @@ Instruções:
 
     const respData = await resp.json();
     const textoIA  = respData?.choices?.[0]?.message?.content || '';
-    if (!textoIA) throw new Error('Resposta vazia do Grok');
+    if (!textoIA) throw new Error('Resposta vazia da IA');
 
-    // Parse JSON da resposta
     const jsonMatch = textoIA.match(/\{[\s\S]*?\}/);
-    if (!jsonMatch) throw new Error('Grok não retornou JSON válido');
+    if (!jsonMatch) throw new Error('IA não retornou JSON. Resposta: ' + textoIA.substring(0, 80));
 
-    const raw = JSON.parse(jsonMatch[0]);
+    const raw   = JSON.parse(jsonMatch[0]);
     const dados = {
       numero_oc:       String(raw.numero_oc       || '').trim(),
       numero_acao:     String(raw.numero_acao      || '').trim(),
@@ -1023,20 +1012,15 @@ Instruções:
     };
 
     if (!dados.numero_oc && !dados.fornecedor) {
-      throw new Error('IA não encontrou dados. Verifique se o arquivo está legível.');
+      throw new Error('IA não identificou dados. Verifique se o arquivo está legível.');
     }
 
     await exibirPreviewOC(dados, file.name, true);
 
   } catch(err) {
-    console.error('Erro OCR Grok:', err);
-    if (dropEl) {
-      dropEl.innerHTML = '<div class="upload-icon">🤖</div><div class="upload-text">Enviar PDF ou foto da OC</div><div class="upload-sub">Leitura automática por IA · PDF, JPG ou PNG</div>';
-    }
-
-    let msg = 'Erro na leitura. Abrindo formulário manual...';
-    if (err.message) msg = err.message.substring(0, 100);
-    App.toast(msg, 'warning');
+    console.error('Erro OCR:', err);
+    if (dropEl) dropEl.innerHTML = '<div class="upload-icon">🤖</div><div class="upload-text">Enviar PDF ou foto da OC</div><div class="upload-sub">PDF, JPG ou PNG</div>';
+    App.toast((err.message || 'Erro na leitura') + ' — abrindo formulário manual', 'warning');
     setTimeout(() => mostrarFormOCManual(''), 1500);
   }
 }

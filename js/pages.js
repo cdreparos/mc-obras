@@ -571,6 +571,7 @@ async function renderPresenca() {
       </div>
     </div>
 
+    <!-- Resumo semana -->
     <div class="stats-grid" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:16px">
       <div class="stat-card">
         <div class="stat-card-inner"><div><div class="stat-label">Presenças</div><div class="stat-value green">${totalPresentes}</div></div><div class="stat-icon green">✓</div></div>
@@ -586,6 +587,7 @@ async function renderPresenca() {
       </div>
     </div>
 
+    <!-- Legenda rápida -->
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
       ${Object.entries(statusCfg).map(([k,v])=>`
         <span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;background:var(--surface2);border:1px solid var(--border)">
@@ -594,6 +596,7 @@ async function renderPresenca() {
       <span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;background:var(--surface2);border:1px solid var(--border)">— Não registrado</span>
     </div>
 
+    <!-- Cards por funcionário (mobile-first) -->
     ${ativos.length===0 ? '<div class="empty-state"><span class="empty-icon">👷</span><p>Nenhum funcionário ativo.</p></div>' :
       ativos.map(f => {
         const diasP = diasSemana.filter(d=>getStatus(f.id,d)==='presente').length;
@@ -618,6 +621,7 @@ async function renderPresenca() {
             </button>`:''}
           </div>
           <div class="card-body" style="padding:8px 14px 12px">
+            <!-- Grid de dias: 7 colunas -->
             <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px">
               ${diasSemana.map(d => {
                 const dt  = new Date(d+'T12:00:00');
@@ -711,97 +715,79 @@ async function pagarDiasPresenca(funcId, dias, valorDia) {
 
 
 // ── ORDENS DE COMPRA ──────────────────────────────────────────
-// Parser atualizado para funcionar com layout do Fornecedor na frente do "Fornec.:" 
-// e lidar com sujeiras/aspas nos blocos Tj de extração do PDF.
+// Parser baseado nos modelos reais Ferreira Santos / ENGIX
 function parsearOC(texto) {
   const r = {};
 
-  // Limpar aspas que o conversor de blocos PDF injeta (ex: "Total:","1.147,00"), facilitando a busca
-  const txtLimpo = texto.replace(/"/g, ' ');
+  // O PDF do OpenLine/ENGIX extrai com \n\n entre cada campo e valor.
+  // Estratégia: dividir em tokens e buscar o token APÓS o label exato.
+  const tokens = texto.split('\n').map(t => t.trim()).filter(t => t.length > 0);
 
-  // ── 1. Nº OC ─────────────────────────────────────────────────
-  let m = txtLimpo.match(/N[º°oO]?\s*:\s*(\d{4,8})/i);
-  if (!m) m = txtLimpo.match(/NR DA OC:\s*(\d{4,8})/i);
-  if (m) r.numero_oc = m[1];
-
-  // ── 2. Nº Ação (Obra) ────────────────────────────────────────
-  m = txtLimpo.match(/A[ÇC][ÃA]O\s*:\s*(\d{3,8})/i);
-  if (!m) {
-    // Fallback: Procura na mesma linha do "Nº Obra" ou logo após (padrão antigo)
-    m = txtLimpo.match(/^(\d{3,6})\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^\n]{15,}?)\s+(\d{2}\/\d{2}\/\d{4})\s*$/m);
-    if (m) {
-      r.numero_acao  = m[1];
-      r.nome_obra    = m[2].trim();
-      const [dd,mm,aaaa] = m[3].split('/');
-      r.data_emissao = `${aaaa}-${mm}-${dd}`;
-    } else {
-      // Tenta pegar o primeiro numero isolado após "Nº Obra"
-      let objM = txtLimpo.match(/N[º°o]?\s*Obra[\s\S]{0,30}?\b(\d{3,6})\b/i);
-      if (objM) r.numero_acao = objM[1];
+  function apos(label) {
+    for (let i = 0; i < tokens.length - 1; i++) {
+      if (tokens[i] === label) return tokens[i + 1];
     }
-  } else {
-    r.numero_acao = m[1];
+    return null;
   }
 
-  // ── 3. Data Emissão ──────────────────────────────────────────
+  function aposRegex(pattern) {
+    for (let i = 0; i < tokens.length - 1; i++) {
+      if (pattern.test(tokens[i])) return tokens[i + 1];
+    }
+    return null;
+  }
+
+  function indexOf(label) {
+    return tokens.findIndex(t => t === label);
+  }
+
+  // ── 1. Nº OC: token após "Nº:" ──────────────────────────────
+  const vNum = apos('Nº:');
+  if (vNum && /^\d{4,6}$/.test(vNum)) r.numero_oc = vNum;
+
+  // ── 2. Nº Obra + Nome + Data: tokens após "DATA" ─────────────
+  // Sequência: "DATA" → "1684" → "UMEF CORONEL..." → "05/02/2026"
+  const iData = indexOf('DATA');
+  if (iData >= 0 && iData + 3 < tokens.length) {
+    const numAcao = tokens[iData + 1];
+    const nomeObra = tokens[iData + 2];
+    const dataStr  = tokens[iData + 3];
+    if (/^\d{3,6}$/.test(numAcao)) {
+      r.numero_acao = numAcao;
+      r.nome_obra   = nomeObra;
+    }
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(dataStr)) {
+      const [dd, mm, aaaa] = dataStr.split('/');
+      r.data_emissao = `${aaaa}-${mm}-${dd}`;
+    }
+  }
+
+  // ── 3. Fornecedor: token após "Fornec.:" ─────────────────────
+  const vForn = apos('Fornec.:');
+  if (vForn && vForn.length > 3) r.fornecedor = vForn;
+
+  // ── 4. CNPJ: token após "CNPJ/CPF:" ─────────────────────────
+  const vCnpj = apos('CNPJ/CPF:');
+  if (vCnpj && /\d{2}/.test(vCnpj)) r.cnpj_fornecedor = vCnpj;
+
+  // ── 5. Data fallback: token após "Entrega:" ──────────────────
   if (!r.data_emissao) {
-    m = txtLimpo.match(/(?:DATA|Entrega\s*:?)[^0-9]*(\d{2}\/\d{2}\/\d{4})/i);
-    if (!m) m = txtLimpo.match(/(\d{2}\/\d{2}\/\d{4})/); // Qualquer data como último recurso
-    if (m) {
-      const [dd,mm,aaaa] = m[1].split('/');
+    const vEnt = aposRegex(/^Entrega:/);
+    if (vEnt && /^\d{2}\/\d{2}\/\d{4}$/.test(vEnt)) {
+      const [dd, mm, aaaa] = vEnt.split('/');
       r.data_emissao = `${aaaa}-${mm}-${dd}`;
     }
   }
 
-  // ── 4. Fornecedor ────────────────────────────────────────────
-  m = txtLimpo.match(/Fornec\.\s*:\s*([^\n]+)/i);
-  if (m && m[1].trim().length > 3) {
-    let f = m[1].trim();
-    // Remove lixo se estiver na mesma linha (ex: "CNPJ" colado na frente)
-    f = f.split(/CNPJ|End:|Bairro:/i)[0].trim();
-    // Remove vírgulas perdidas
-    f = f.replace(/,+$/, '').trim();
-    if (f.length > 2) r.fornecedor = f;
-  }
-
-  // Se não achou na frente, tenta a lógica antiga (Fornecedor posicionado *antes* de "Fornec.:")
-  if (!r.fornecedor) {
-    const EXCLUIR_FORN = new Set(['DEPARTAMENTO','SISTEMA','ENGIX','ORDEM','COMPRADOR','COMPRAS','QUALIDADE','GESTÃO','GESTAO','EMPRESA:']);
-    const idxFornec = txtLimpo.indexOf('Fornec.:');
-    if (idxFornec > 0) {
-      const blocoAntes = txtLimpo.substring(0, idxFornec).trim().split('\n');
-      const ignorarPrefixo = ['End:','Cidade:','Bairro:','UF:','CEP:','Vendedor:','Tel.:','DADOS'];
-      const ignorarRegex   = /^(AV\b|RUA\b|R\.\s|ROD\b|ESTRADA\b)/i;
-
-      for (let i = blocoAntes.length - 1; i >= 0; i--) {
-        const linha = blocoAntes[i].trim();
-        if (!linha) continue;
-        if (/Nº Obra|Obra\s+DATA/.test(linha)) break;
-        if (ignorarPrefixo.some(p => linha.startsWith(p))) continue;
-        if (ignorarRegex.test(linha)) continue;
-        if (/UF:\s*[A-Z]{2}|CEP:|Bairro:/.test(linha)) continue;
-        const palavras = linha.split(/\s+/);
-        if (palavras.some(p => EXCLUIR_FORN.has(p))) continue;
-        if (linha.length > 4 && /[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{3}/.test(linha)) {
-          r.fornecedor = linha;
-          break;
-        }
-      }
-    }
-  }
-
-  // ── 5. CNPJ Fornecedor ───────────────────────────────────────
-  m = txtLimpo.match(/CNPJ\/CPF\s*:?[^0-9]*(\d{2}[\.\s]?\d{3}[\.\s]?\d{3}[\/\s]?\d{4}[-\s]?\d{2})/i);
-  if (m) r.cnpj_fornecedor = m[1].replace(/\s/g, '').trim();
-
-  // ── 6. Valor Total ───────────────────────────────────────────
-  m = txtLimpo.match(/Total\s*:?[^0-9]*([\d\.]+,[0-9]{2})/i);
-  if (m) {
-    r.valor_total = parseFloat(m[1].replace(/\./g,'').replace(',','.'));
+  // ── 6. Valor Total: token após "Total:" ──────────────────────
+  const vTotal = apos('Total:');
+  if (vTotal && /[\d,]/.test(vTotal)) {
+    r.valor_total = parseFloat(vTotal.replace(/\./g, '').replace(',', '.'));
   }
 
   return r;
 }
+
 
 async function renderOC() {
   const { ordens_compra, obras, planilhas } = await loadAll();
@@ -890,13 +876,15 @@ async function showImportarOC(obraIdPre = '') {
           ondragover="event.preventDefault();this.classList.add('drag')"
           ondragleave="this.classList.remove('drag')"
           ondrop="event.preventDefault();this.classList.remove('drag');processarArquivoOC(event.dataTransfer.files[0])">
-          <div class="upload-icon">📄</div>
-          <div class="upload-text">Arraste o PDF da OC aqui</div>
-          <div class="upload-sub">ou clique para selecionar · Compatível com Ferreira Santos, ENGIX e outros</div>
-          <input type="file" id="oc-file" accept=".pdf,.txt" style="display:none" onchange="processarArquivoOC(this.files[0])">
+          <div class="upload-icon">🤖</div>
+          <div class="upload-text">Enviar PDF ou foto da OC</div>
+          <div class="upload-sub">Leitura automática por IA · PDF, JPG ou PNG</div>
+          <input type="file" id="oc-file" accept=".pdf,image/*" capture="environment" style="display:none" onchange="processarArquivoOC(this.files[0])">
         </div>
-        <div style="margin-top:12px;text-align:center">
-          <button class="btn-link" onclick="mostrarFormOCManual('${obraIdPre}')">Preencher manualmente →</button>
+        <div style="margin-top:12px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap">
+          <button class="btn-link" onclick="document.getElementById('oc-file').click()">📷 Tirar foto da OC</button>
+          <span style="color:var(--border2)">·</span>
+          <button class="btn-link" onclick="mostrarFormOCManual('${obraIdPre}')">✏️ Preencher manualmente</button>
         </div>
       </div>
       <div id="oc-step2" style="display:none"></div>`
@@ -905,73 +893,118 @@ async function showImportarOC(obraIdPre = '') {
 
 async function processarArquivoOC(file) {
   if (!file) return;
-  document.getElementById('oc-drop').innerHTML = '<div class="upload-icon">&#9203;</div><div class="upload-text">Lendo PDF...</div>';
 
-  const reader = new FileReader();
-  reader.onload = async (e) => {
-    try {
-      const bytes = new Uint8Array(e.target.result);
-      const raw   = new TextDecoder('latin1').decode(bytes);
+  const dropEl = document.getElementById('oc-drop');
+  dropEl.innerHTML = '<div class="upload-icon">🤖</div><div class="upload-text">Lendo com IA...</div><div class="upload-sub">Isso pode levar alguns segundos</div>';
 
-      // Extrai strings dos blocos BT...ET do PDF
-      const blocos = [];
-      const btRe = /BT([\s\S]*?)ET/g;
-      let m;
-      while ((m = btRe.exec(raw)) !== null) {
-        const bloco = m[1];
-        // Captura strings entre parênteses seguidas de Tj ou TJ
-        const strRe = /\(([^)(]*(?:\\.[^)(]*)*)\)\s*(?:Tj|TJ|'|")/g;
-        let sm;
-        while ((sm = strRe.exec(bloco)) !== null) {
-          let s = sm[1];
-          // Decodifica escapes comuns do PDF
-          s = s.replace(/\\n/g, ' ').replace(/\\r/g, '').replace(/\\t/g, ' ');
-          s = s.replace(/\\\\/g, '\\').replace(/\\\(/g, '(').replace(/\\\)/g, ')');
-          if (s.trim().length > 1) blocos.push(s.trim());
-        }
-        // Fallback: qualquer string entre parênteses no bloco
-        if (blocos.length === 0) {
-          const strRe2 = /\(([^)(]{2,})\)/g;
-          let sm2;
-          while ((sm2 = strRe2.exec(bloco)) !== null) {
-            const s = sm2[1].replace(/\\n/g,' ').replace(/\\\(/g,'(').replace(/\\\)/g,')');
-            if (s.trim().length > 1) blocos.push(s.trim());
-          }
-        }
-      }
-      let texto = blocos.join('\n');
+  try {
+    // Converte o arquivo para base64
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload  = e => resolve(e.target.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
 
-      // Fallback para PDFs com texto em stream direto
-      if (texto.replace(/\s/g,'').length < 80) {
-        const linhas = [];
-        raw.replace(/\(([^)(]{3,})\)/g, function(_, s) {
-          const limpo = s.replace(/[^\x20-\x7E\xC0-\xFF]/g,' ').trim();
-          if (limpo.length > 2) linhas.push(limpo);
-        });
-        texto = linhas.join('\n');
-      }
-
-      // Fallback final: texto bruto legível
-      if (texto.replace(/\s/g,'').length < 80) {
-        texto = raw.split('\n')
-          .map(l => l.replace(/[^\x20-\x7E\xC0-\xFF]/g,' ').trim())
-          .filter(l => l.length > 3)
-          .join('\n');
-      }
-
-      await exibirPreviewOC(texto, file.name);
-    } catch(err) {
-      console.error('Erro lendo PDF:', err);
-      mostrarFormOCManual('');
-      App.toast('Nao foi possivel ler o PDF automaticamente. Preencha manualmente.', 'warning');
+    const isPDF  = file.type === 'application/pdf' || file.name.endsWith('.pdf');
+    const isImg  = file.type.startsWith('image/');
+    if (!isPDF && !isImg) {
+      App.toast('Formato não suportado. Use PDF ou imagem (JPG, PNG).', 'error');
+      return;
     }
-  };
-  reader.readAsArrayBuffer(file);
+
+    const mediaType = isPDF ? 'application/pdf' : file.type;
+
+    // Chama a API do Claude para ler o documento
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1024,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: isPDF ? 'document' : 'image',
+              source: { type: 'base64', media_type: mediaType, data: base64 }
+            },
+            {
+              type: 'text',
+              text: `Você é um extrator de dados de Ordem de Compra (OC) da construtora ENGIX.
+Extraia EXATAMENTE estes 6 campos do documento e responda APENAS com JSON válido, sem texto antes ou depois:
+
+{
+  "numero_oc": "número da OC (campo Nº no canto superior direito)",
+  "numero_acao": "número da obra/ação (coluna Nº Obra)",
+  "fornecedor": "nome do fornecedor (campo Fornec.)",
+  "cnpj_fornecedor": "CNPJ do fornecedor (campo CNPJ/CPF ao lado do fornecedor)",
+  "data_emissao": "data no formato YYYY-MM-DD (coluna DATA da tabela de obra)",
+  "valor_total": 0.00
 }
 
-async function exibirPreviewOC(texto, filename) {
+Regras:
+- numero_oc e numero_acao são apenas números (ex: "17823", "1684")
+- data_emissao deve ser convertida de DD/MM/AAAA para AAAA-MM-DD
+- valor_total deve ser número decimal sem formatação (ex: 1147.00)
+- Se não encontrar um campo, use null`
+            }
+          ]
+        }]
+      })
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error?.message || `HTTP ${response.status}`);
+    }
+
+    const data  = await response.json();
+    const texto = data.content?.find(b => b.type === 'text')?.text || '';
+
+    // Parse do JSON retornado pelo Claude
+    let dados = {};
+    try {
+      const jsonMatch = texto.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error('JSON não encontrado na resposta');
+      const raw = JSON.parse(jsonMatch[0]);
+
+      // Normaliza os campos
+      dados = {
+        numero_oc:      String(raw.numero_oc  || '').trim(),
+        numero_acao:    String(raw.numero_acao || '').trim(),
+        fornecedor:     String(raw.fornecedor  || '').trim(),
+        cnpj_fornecedor:String(raw.cnpj_fornecedor || '').trim(),
+        data_emissao:   String(raw.data_emissao || '').trim(),
+        valor_total:    parseFloat(String(raw.valor_total || '0').replace(',','.')) || 0,
+      };
+    } catch (parseErr) {
+      console.error('Erro parseando JSON do Claude:', parseErr, texto);
+      throw new Error('Resposta inesperada da IA. Tente novamente ou preencha manualmente.');
+    }
+
+    await exibirPreviewOC(dados, file.name, true);
+
+  } catch(err) {
+    console.error('Erro OCR:', err);
+    dropEl.innerHTML = '<div class="upload-icon">📄</div><div class="upload-text">Arraste o PDF da OC aqui</div><div class="upload-sub">ou clique para selecionar</div>';
+
+    // Se o erro for de autenticação (sem chave API), avisa o usuário
+    if (err.message && err.message.includes('401')) {
+      App.toast('API do Claude não configurada. Use o formulário manual.', 'warning');
+    } else {
+      App.toast('Erro ao processar: ' + err.message + '. Preencha manualmente.', 'warning');
+    }
+    setTimeout(() => mostrarFormOCManual(''), 1500);
+  }
+}
+
+async function exibirPreviewOC(dados, filename, viaIA=false) {
   const { obras, planilhas } = await loadAll();
-  const dados = parsearOC(texto + '\n' + filename);
+  // dados pode vir direto da API Claude (objeto) ou do parser local (texto)
+  if (typeof dados === 'string') {
+    dados = parsearOC(dados + '\n' + filename);
+  }
 
   let obraEncontrada = null;
   if (dados.numero_acao) {
@@ -982,7 +1015,7 @@ async function exibirPreviewOC(texto, filename) {
 
   document.getElementById('oc-step1').style.display = 'none';
   document.getElementById('oc-step2').innerHTML = `
-    <div class="alert success no-click"><span>✓ Dados extraídos — confira e ajuste se necessário</span></div>
+    <div class="alert success no-click"><span>✓ Dados extraídos ${viaIA ? "pela IA 🤖" : "do arquivo"} — confira e ajuste se necessário</span></div>
 
     <div class="oc-preview">
       <div class="oc-preview-header">Dados Extraídos da OC</div>
@@ -1247,6 +1280,7 @@ async function renderLancamentos() {
       </div>
     </div>
 
+    <!-- Totais rápidos -->
     <div class="stats-grid" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:16px">
       <div class="stat-card">
         <div class="stat-card-inner"><div><div class="stat-label">Total Despesas</div><div class="stat-value sm red">${fmt(totalDesp)}</div></div><div class="stat-icon red">📉</div></div>
@@ -1259,6 +1293,7 @@ async function renderLancamentos() {
       </div>
     </div>
 
+    <!-- Filtros -->
     <div class="card" style="margin-bottom:12px">
       <div class="card-body" style="padding:14px">
         <div class="filter-row" style="flex-wrap:wrap;gap:8px">
@@ -1546,6 +1581,7 @@ async function renderHorasExtras() {
       </div>
     </div>
 
+    <!-- Resumo do mês -->
     <div class="stats-grid" style="grid-template-columns:1fr 1fr 1fr;margin-bottom:16px">
       <div class="stat-card">
         <div class="stat-card-inner"><div><div class="stat-label">Total de Horas</div><div class="stat-value">${totalHoras.toFixed(1)}h</div></div><div class="stat-icon blue">⏱</div></div>
@@ -1561,6 +1597,7 @@ async function renderHorasExtras() {
       </div>
     </div>
 
+    <!-- Por funcionário -->
     ${ativos.map(f => {
       const regsFunc = registros.filter(r=>r.funcionario_id===f.id)
         .sort((a,b)=>b.data.localeCompare(a.data));
@@ -1671,6 +1708,7 @@ async function showRegistrarHoraExtra() {
         <label class="form-label">Observação</label>
         <input id="he-desc" class="form-input" placeholder="Ex: Reforço para entrega do prazo">
       </div>
+      <!-- Preview do cálculo -->
       <div id="he-preview" style="background:var(--surface2);border-radius:10px;padding:14px;margin-top:4px;display:none">
         <div style="font-size:12px;color:var(--text3);margin-bottom:6px">Cálculo automático</div>
         <div id="he-calc-detalhe" style="font-size:13px;color:var(--text2)"></div>

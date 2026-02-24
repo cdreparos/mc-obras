@@ -719,96 +719,79 @@ async function pagarDiasPresenca(funcId, dias, valorDia) {
 function parsearOC(texto) {
   const r = {};
 
-  // ── Normaliza o texto ──────────────────────────────────────
-  // Remove espaços múltiplos dentro das linhas mas preserva quebras
-  const linhas = texto.split(/\r?\n/).map(l => l.replace(/\s{2,}/g,' ').trim()).filter(l=>l.length>0);
-  const txt = linhas.join('\n');
+  // Palavras que nunca são nome de fornecedor (cabeçalho da ENGIX)
+  const EXCLUIR_FORN = new Set([
+    'DEPARTAMENTO','SISTEMA','ENGIX','ORDEM','COMPRADOR','COMPRAS',
+    'QUALIDADE','GESTÃO','GESTAO','EMPRESA:'
+  ]);
 
-  // ── 1. NÚMERO DA OC ───────────────────────────────────────
-  // Padrão ENGIX: "Nº:" seguido de número (mesma linha ou próxima)
-  // Padrão FS:    "N.Pedido:" ou "PEDIDO Nº"
-  const mNum =
-    txt.match(/N[º°o][\s:\.]+(\d{4,6})\b/) ||           // Nº: 17823
-    txt.match(/N\.?\s*Pedido[\s:]+(\d{4,6})/i) ||        // N.Pedido: 12257
-    txt.match(/PEDIDO\s+N[º°o][\s:]+(\d{4,6})/i) ||      // PEDIDO Nº 12257
-    txt.match(/OC[\s:Nº°]+(\d{4,6})/i);                  // OC 17823
-  if (mNum) r.numero_oc = mNum[1].trim();
+  // ── 1. Nº OC ─────────────────────────────────────────────────
+  // Padrão OpenLine: "Nº: 17823" no cabeçalho
+  // Fallback:        "NR DA OC: 17823" no rodapé de observação
+  let m = texto.match(/N[º°o]:\s*(\d{4,6})/);
+  if (!m) m = texto.match(/NR DA OC:\s*(\d{4,6})/i);
+  if (m) r.numero_oc = m[1];
 
-  // ── 2. NÚMERO DA OBRA / AÇÃO ──────────────────────────────
-  // ENGIX: célula "Nº Obra" seguida de número na próxima linha/célula
-  // FS: "Nº Ação" ou "Ação:"
-  // Estratégia: encontrar "Nº Obra" ou "Nº Ação" e pegar o número LOGO APÓS
-  const mAcao =
-    txt.match(/N[º°o]\s*Obra[\s\n:]+(\d{3,6})\b/) ||       // Nº Obra\n1684
-    txt.match(/N[º°o]\s*A[çc][ãa]o[\s\n:]+(\d{3,6})\b/) || // Nº Ação: 1671
-    txt.match(/A[çc][ãa]o[\s:]+(\d{3,6})\b/i);              // Ação: 1671
-  if (mAcao) r.numero_acao = mAcao[1].trim();
-
-  // ── 3. FORNECEDOR ─────────────────────────────────────────
-  // ENGIX: "Fornec.:" na seção "DADOS DO FORNECEDOR"
-  // FS:    "Fornecedor:" ou "Fornec.:"
-  // Captura tudo até o fim da linha, descartando CNPJ/CPF na mesma linha
-  const mForn =
-    txt.match(/Fornec\.?[\s:]+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^\n]{3,60})/) ||
-    txt.match(/Fornecedor[\s:]+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^\n]{3,60})/i);
-  if (mForn) {
-    // Remove CNPJ/CPF caso apareça na mesma linha após o nome
-    r.fornecedor = mForn[1]
-      .replace(/CNPJ[^\n]*/i,'')
-      .replace(/CPF[^\n]*/i,'')
-      .trim()
-      .replace(/\s+/g,' ');
-  }
-
-  // ── 4. CNPJ DO FORNECEDOR ────────────────────────────────
-  // Estratégia: pegar TODOS os CNPJs do PDF, ignorar o da EMPRESA (aparece antes)
-  // O CNPJ do fornecedor vem DEPOIS da linha "DADOS DO FORNECEDOR" ou "Fornec.:"
-  const idxFornecedor = txt.search(/DADOS DO FORNECEDOR|Fornec\./i);
-  const txtAposFornec = idxFornecedor >= 0 ? txt.substring(idxFornecedor) : txt;
-  const regexCNPJ = /(\d{2}[\.\s]?\d{3}[\.\s]?\d{3}[\/\s]?\d{4}[-\s]?\d{2})/g;
-
-  // Preferência: CNPJ/CPF na mesma linha do fornecedor
-  const mCnpjLinha = txtAposFornec.match(/CNPJ\/CPF[\s:]+(\d{2}[\.\s]?\d{3}[\.\s]?\d{3}[\/\s]?\d{4}[-\s]?\d{2})/i);
-  if (mCnpjLinha) {
-    r.cnpj_fornecedor = mCnpjLinha[1].trim();
-  } else {
-    // Fallback: último CNPJ de todo o documento
-    const todos = [...txt.matchAll(regexCNPJ)].map(m=>m[1]);
-    if (todos.length > 0) r.cnpj_fornecedor = todos[todos.length-1];
-  }
-
-  // ── 5. DATA ───────────────────────────────────────────────
-  // ENGIX: coluna "DATA" com valor dd/mm/aaaa na mesma linha ou próxima
-  // FS:    "Data:" ou data isolada
-  // Busca a data que aparece APÓS a palavra DATA
-  const mData =
-    txt.match(/\bDATA\b[\s:]+(\d{2}\/\d{2}\/\d{4})/) ||  // DATA 05/02/2026
-    txt.match(/\bData[\s:]+(\d{2}\/\d{2}\/\d{4})/i) ||   // Data: 05/02/2026
-    txt.match(/Emiss[ãa]o[\s:]+(\d{2}\/\d{2}\/\d{4})/i)||// Emissão: 05/02/2026
-    txt.match(/(\d{2}\/\d{2}\/\d{4})/);                   // qualquer data
-  if (mData) {
-    const [dd,mm,aaaa] = mData[1].split('/');
+  // ── 2. Nº Obra + Nome da Obra + Data ─────────────────────────
+  // Layout OpenLine: "1684  UMEF CORONEL JOAQUIM...  05/02/2026"
+  // Tudo na mesma linha — número, nome longo, data no fim
+  m = texto.match(/^(\d{3,6})\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^\n]{15,}?)\s+(\d{2}\/\d{2}\/\d{4})\s*$/m);
+  if (m) {
+    r.numero_acao  = m[1];
+    r.nome_obra    = m[2].trim();
+    const [dd,mm,aaaa] = m[3].split('/');
     r.data_emissao = `${aaaa}-${mm}-${dd}`;
   }
 
-  // ── 6. VALOR TOTAL ────────────────────────────────────────
-  // ENGIX/FS: linha "Total:" ou "Total" seguida de valor
-  // O valor pode ter ponto como separador de milhar: 1.147,00
-  const mTotal =
-    txt.match(/\bTotal[\s:]*\n[\s]*([\d\.]+,\d{2})/) ||   // Total:\n1.147,00
-    txt.match(/\bTotal[\s:]+([\d\.]+,\d{2})/) ||           // Total: 1.147,00
-    txt.match(/\bTOTAL[\s:]+([\d\.]+,\d{2})/);             // TOTAL 1.147,00
-  if (mTotal) {
-    r.valor_total = parseFloat(mTotal[1].replace(/\./g,'').replace(',','.'));
+  // ── 3. Fornecedor ─────────────────────────────────────────────
+  // Layout OpenLine: o nome do fornecedor vem ANTES do label "Fornec.:"
+  // Separado do label por linhas de endereço (AV, RUA, cidade, bairro)
+  const idxFornec = texto.indexOf('Fornec.:');
+  if (idxFornec > 0) {
+    const blocoAntes = texto.substring(0, idxFornec).trim().split('\n');
+    const ignorarPrefixo = ['End:','Cidade:','Bairro:','UF:','CEP:','Vendedor:','Tel.:','DADOS'];
+    const ignorarRegex   = /^(AV\b|RUA\b|R\.\s|ROD\b|ESTRADA\b)/i;
+
+    for (let i = blocoAntes.length - 1; i >= 0; i--) {
+      const linha = blocoAntes[i].trim();
+      if (!linha) continue;
+      // Para na seção anterior (Nº Obra)
+      if (/Nº Obra|Obra\s+DATA/.test(linha)) break;
+      // Ignora rótulos de endereço
+      if (ignorarPrefixo.some(p => linha.startsWith(p))) continue;
+      if (ignorarRegex.test(linha)) continue;
+      if (/UF:\s*[A-Z]{2}|CEP:|Bairro:/.test(linha)) continue;
+      // Ignora palavras do cabeçalho ENGIX
+      const palavras = linha.split(/\s+/);
+      if (palavras.some(p => EXCLUIR_FORN.has(p))) continue;
+      // Linha válida com aparência de nome de empresa
+      if (linha.length > 4 && /[A-ZÁÉÍÓÚÂÊÔÃÕÇ]{3}/.test(linha)) {
+        r.fornecedor = linha;
+        break;
+      }
+    }
   }
 
-  // ── Nome/desc da obra (bônus) ─────────────────────────────
-  // ENGIX: linha longa após o número da obra na célula "Obra"
-  // Ex: "1684 UMEF CORONEL JOAQUIM DE FREITAS..."
-  if (r.numero_acao) {
-    const mNomeObra = txt.match(new RegExp(r.numero_acao + '[\\s]+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^\\n]{10,120})'));
-    if (mNomeObra) r.nome_obra = mNomeObra[1].trim();
+  // ── 4. CNPJ Fornecedor ────────────────────────────────────────
+  // OpenLine: "CNPJ/CPF: 04.731.355/0001-01" na linha do fornecedor
+  m = texto.match(/CNPJ\/CPF:\s*(\d{2}[\.\s]?\d{3}[\.\s]?\d{3}[\/\s]?\d{4}[-\s]?\d{2})/);
+  if (m) r.cnpj_fornecedor = m[1].trim();
+
+  // ── 5. Data (fallback) ────────────────────────────────────────
+  // Já capturada junto com nº obra acima
+  // Fallback: campo "Entrega:" no rodapé
+  if (!r.data_emissao) {
+    m = texto.match(/Entrega:\s*(\d{2}\/\d{2}\/\d{4})/);
+    if (m) {
+      const [dd,mm,aaaa] = m[1].split('/');
+      r.data_emissao = `${aaaa}-${mm}-${dd}`;
+    }
   }
+
+  // ── 6. Valor Total ────────────────────────────────────────────
+  // OpenLine: "Total: 1.147,00" aparece logo no início do texto extraído
+  m = texto.match(/^Total:\s*([\d\.]+,\d{2})/m);
+  if (m) r.valor_total = parseFloat(m[1].replace(/\./g,'').replace(',','.'));
 
   return r;
 }

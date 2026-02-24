@@ -758,7 +758,7 @@ function parsearOC(texto) {
   const idxF = txt.toLowerCase().indexOf('fornec');
   const txtF = idxF >= 0 ? txt.substring(idxF) : txt;
   // Captura diretamente pelo formato numérico — tolerante a variações OCR
-  const mCnpj = txtF.match(/(\d{2}[.\s]\d{3}[.\s]\d{3}[\/\s]\d{4}[\s-]{1,2}\d{2})/);
+  const mCnpj = txtF.match(/(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})/);
   if (mCnpj) r.cnpj_fornecedor = mCnpj[1].trim();
 
   // 5. Data fallback

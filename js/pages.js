@@ -881,6 +881,7 @@ async function showImportarOC(obraIdPre = '') {
           <button class="btn-link" onclick="mostrarFormOCManual('${obraIdPre}')">Preencher manualmente →</button>
         </div>
       </div>
+      <div id="oc-debug" style="margin-top:8px;font-size:11px"></div>
       <div id="oc-step2" style="display:none"></div>`
   });
 }
@@ -923,10 +924,10 @@ async function processarArquivoOC(file) {
     const texto = (data.ParsedResults || []).map(p => p.ParsedText || '').join('\n').trim();
     if (!texto || texto.length < 20) throw new Error('OCR não extraiu texto. Arquivo legível?');
 
-    console.log('[OCR] Texto:\n', texto);
+    console.log('[OCR] Texto bruto:\n', texto);
     const dados = parsearOC(texto);
-    console.log('[OCR] Dados:', dados);
-    await exibirPreviewOC(dados, file.name, false);
+    console.log('[OCR] Dados parseados:', dados);
+    await exibirPreviewOC(dados, file.name);
 
   } catch(err) {
     console.error('Erro OCR:', err);
@@ -955,9 +956,10 @@ function redimensionarImagem(file, maxDim) {
     img.src = url;
   });
 }
-async function exibirPreviewOC(texto, filename) {
+async function exibirPreviewOC(input, filename) {
   const { obras, planilhas } = await loadAll();
-  const dados = parsearOC(texto + '\n' + filename);
+  // Aceita tanto texto bruto (string) quanto objeto já parseado
+  const dados = (typeof input === 'string') ? parsearOC(input + '\n' + filename) : input;
 
   let obraEncontrada = null;
   if (dados.numero_acao) {

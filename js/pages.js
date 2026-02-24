@@ -734,10 +734,9 @@ function parsearOC(texto) {
   }
   if (!r.numero_acao) { m = txt.match(/A[ÇC][ÃA]O[\s:]+(\d{3,6})/i); if (m) r.numero_acao = m[1]; }
 
-  // 3. Fornecedor — estratégia A: "Fornec.: NOME" na mesma linha (OCR)
+  // 3. Fornecedor
   m = txt.match(/Fornec\.?[\s:]+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][^\n\r]{3,60})/i);
   if (m) { const c = m[1].replace(/\s*CNPJ.*/i,'').trim(); if (c.length > 3) r.fornecedor = c; }
-  // Estratégia B: nome vem ANTES de "Fornec.:" (texto nativo)
   if (!r.fornecedor) {
     const IGNORAR = ['End:','Cidade:','Bairro:','DADOS DO FORNECEDOR','DEPARTAMENTO',
                      'SISTEMA','ENGIX','Nº Obra','Vendedor:','Item'];
@@ -783,80 +782,6 @@ function parsearOC(texto) {
 
   return r;
 }
-
-async function processarArquivoOC(file) {
-  if (!file) return;
-  const dropEl = document.getElementById('oc-drop');
-  if (!dropEl) return;
-  dropEl.innerHTML = '<div class="upload-icon">🔍</div><div class="upload-text">Extraindo texto...</div><div class="upload-sub">Aguarde alguns segundos</div>';
-
-  try {
-    const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-    const isImg = file.type.startsWith('image/');
-    if (!isPDF && !isImg) {
-      App.toast('Use PDF ou imagem (JPG, PNG).', 'error');
-      dropEl.innerHTML = '<div class="upload-icon">🔍</div><div class="upload-text">Enviar PDF ou foto da OC</div><div class="upload-sub">PDF, JPG ou PNG</div>';
-      return;
-    }
-
-    const OCR_KEY = window.OCRSPACE_API_KEY || 'helloworld';
-
-    // Imagens de celular podem ter 4-8MB — redimensiona para caber no limite de 5MB
-    let fileEnvio = file;
-    if (isImg) fileEnvio = await redimensionarImagem(file, 1800);
-
-    const formData = new FormData();
-    formData.append('apikey',            OCR_KEY);
-    formData.append('language',          'por');
-    formData.append('isOverlayRequired', 'false');
-    formData.append('detectOrientation', 'true');
-    formData.append('scale',             'true');
-    formData.append('OCREngine',         '2');
-    if (isPDF) formData.append('filetype', 'PDF');
-    formData.append('file', fileEnvio, file.name);
-
-    const resp = await fetch('https://api.ocr.space/parse/image', { method: 'POST', body: formData });
-    if (!resp.ok) throw new Error(`OCR.space HTTP ${resp.status}`);
-
-    const data = await resp.json();
-    if (data.IsErroredOnProcessing) throw new Error(data.ErrorMessage?.[0] || 'Erro OCR');
-
-    const texto = (data.ParsedResults || []).map(p => p.ParsedText || '').join('\n').trim();
-    if (!texto || texto.length < 20) throw new Error('OCR não extraiu texto. Arquivo legível?');
-
-    console.log('[OCR] Texto:\n', texto);
-    const dados = parsearOC(texto);
-    console.log('[OCR] Dados:', dados);
-    await exibirPreviewOC(dados, file.name, false);
-
-  } catch(err) {
-    console.error('Erro OCR:', err);
-    if (dropEl) dropEl.innerHTML = '<div class="upload-icon">🔍</div><div class="upload-text">Enviar PDF ou foto da OC</div><div class="upload-sub">PDF, JPG ou PNG</div>';
-    App.toast((err.message||'Erro na leitura') + ' — abrindo formulário manual', 'warning');
-    setTimeout(() => mostrarFormOCManual(''), 1500);
-  }
-}
-
-function redimensionarImagem(file, maxDim) {
-  return new Promise(resolve => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      const ratio  = Math.min(maxDim/img.width, maxDim/img.height, 1);
-      const canvas = document.createElement('canvas');
-      canvas.width  = Math.round(img.width  * ratio);
-      canvas.height = Math.round(img.height * ratio);
-      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob(blob => {
-        resolve(new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' }));
-      }, 'image/jpeg', 0.88);
-    };
-    img.onerror = () => resolve(file);
-    img.src = url;
-  });
-}
-
 async function renderOC() {
   const { ordens_compra, obras, planilhas } = await loadAll();
   const main = document.getElementById('main-content');
@@ -934,12 +859,102 @@ async function cancelarOCGlobal(ocId) {
   App.navigate('ordens_compra');
 }
 
-async function exibirPreviewOC(dados, filename, viaIA=false) {
-  const { obras, planilhas } = await loadAll();
-  // dados pode vir direto da API Claude (objeto) ou do parser local (texto)
-  if (typeof dados === 'string') {
-    dados = parsearOC(dados + '\n' + filename);
+async function showImportarOC(obraIdPre = '') {
+  const { obras } = await loadAll();
+  showModal({
+    title: 'Importar Ordem de Compra',
+    body: `
+      <div id="oc-step1">
+        <div class="upload-area" id="oc-drop" onclick="document.getElementById('oc-file').click()"
+          ondragover="event.preventDefault();this.classList.add('drag')"
+          ondragleave="this.classList.remove('drag')"
+          ondrop="event.preventDefault();this.classList.remove('drag');processarArquivoOC(event.dataTransfer.files[0])">
+          <div class="upload-icon">📄</div>
+          <div class="upload-text">Arraste o PDF da OC aqui</div>
+          <div class="upload-sub">ou clique para selecionar · Compatível com Ferreira Santos, ENGIX e outros</div>
+          <input type="file" id="oc-file" accept=".pdf,.txt" style="display:none" onchange="processarArquivoOC(this.files[0])">
+        </div>
+        <div style="margin-top:12px;text-align:center">
+          <button class="btn-link" onclick="mostrarFormOCManual('${obraIdPre}')">Preencher manualmente →</button>
+        </div>
+      </div>
+      <div id="oc-step2" style="display:none"></div>`
+  });
+}
+
+async function processarArquivoOC(file) {
+  if (!file) return;
+  const dropEl = document.getElementById('oc-drop');
+  if (!dropEl) return;
+  dropEl.innerHTML = '<div class="upload-icon">🔍</div><div class="upload-text">Extraindo texto...</div><div class="upload-sub">Aguarde alguns segundos</div>';
+
+  try {
+    const isPDF = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    const isImg = file.type.startsWith('image/');
+    if (!isPDF && !isImg) {
+      App.toast('Use PDF ou imagem (JPG, PNG).', 'error');
+      dropEl.innerHTML = '<div class="upload-icon">🔍</div><div class="upload-text">Enviar PDF ou foto da OC</div><div class="upload-sub">PDF, JPG ou PNG</div>';
+      return;
+    }
+
+    const OCR_KEY = window.OCRSPACE_API_KEY || 'helloworld';
+    let fileEnvio = file;
+    if (isImg) fileEnvio = await redimensionarImagem(file, 1800);
+
+    const formData = new FormData();
+    formData.append('apikey',            OCR_KEY);
+    formData.append('language',          'por');
+    formData.append('isOverlayRequired', 'false');
+    formData.append('detectOrientation', 'true');
+    formData.append('scale',             'true');
+    formData.append('OCREngine',         '2');
+    if (isPDF) formData.append('filetype', 'PDF');
+    formData.append('file', fileEnvio, file.name);
+
+    const resp = await fetch('https://api.ocr.space/parse/image', { method: 'POST', body: formData });
+    if (!resp.ok) throw new Error(`OCR.space HTTP ${resp.status}`);
+
+    const data = await resp.json();
+    if (data.IsErroredOnProcessing) throw new Error(data.ErrorMessage?.[0] || 'Erro OCR');
+
+    const texto = (data.ParsedResults || []).map(p => p.ParsedText || '').join('\n').trim();
+    if (!texto || texto.length < 20) throw new Error('OCR não extraiu texto. Arquivo legível?');
+
+    console.log('[OCR] Texto:\n', texto);
+    const dados = parsearOC(texto);
+    console.log('[OCR] Dados:', dados);
+    await exibirPreviewOC(dados, file.name, false);
+
+  } catch(err) {
+    console.error('Erro OCR:', err);
+    if (dropEl) dropEl.innerHTML = '<div class="upload-icon">🔍</div><div class="upload-text">Enviar PDF ou foto da OC</div><div class="upload-sub">PDF, JPG ou PNG</div>';
+    App.toast((err.message||'Erro na leitura') + ' — abrindo formulário manual', 'warning');
+    setTimeout(() => mostrarFormOCManual(''), 1500);
   }
+}
+
+function redimensionarImagem(file, maxDim) {
+  return new Promise(resolve => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const ratio  = Math.min(maxDim/img.width, maxDim/img.height, 1);
+      const canvas = document.createElement('canvas');
+      canvas.width  = Math.round(img.width  * ratio);
+      canvas.height = Math.round(img.height * ratio);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(blob => {
+        resolve(new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' }));
+      }, 'image/jpeg', 0.88);
+    };
+    img.onerror = () => resolve(file);
+    img.src = url;
+  });
+}
+async function exibirPreviewOC(texto, filename) {
+  const { obras, planilhas } = await loadAll();
+  const dados = parsearOC(texto + '\n' + filename);
 
   let obraEncontrada = null;
   if (dados.numero_acao) {
@@ -950,7 +965,7 @@ async function exibirPreviewOC(dados, filename, viaIA=false) {
 
   document.getElementById('oc-step1').style.display = 'none';
   document.getElementById('oc-step2').innerHTML = `
-    <div class="alert success no-click"><span>✓ Dados extraídos ${viaIA ? "pela IA 🤖" : "do arquivo"} — confira e ajuste se necessário</span></div>
+    <div class="alert success no-click"><span>✓ Dados extraídos — confira e ajuste se necessário</span></div>
 
     <div class="oc-preview">
       <div class="oc-preview-header">Dados Extraídos da OC</div>
